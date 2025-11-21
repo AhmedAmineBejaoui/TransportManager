@@ -1,0 +1,150 @@
+🟢 1. Principe du tunnel SSH dans ton cas
+
+Tu as une seule machine, mais deux OS :
+
+Windows hôte (où tourne ton application Node.js)
+
+Linux VirtualBox (où tourne ta base PostgreSQL ou MySQL)
+
+Tu vas créer un tunnel SSH :
+
+Windows: localhost:5432  →  (SSH Tunnel)  → Linux:localhost:5432
+
+
+Résultat :
+
+👉 Node.js se connecte à localhost
+👉 mais ça passe dans un tunnel SSH jusqu’à ta VM Linux
+👉 sans exposer la base au réseau, même interne
+
+⚠️ La base de données reste isolée dans Linux, ce que tu veux.
+
+🟢 2. Conditions pour que ça marche
+Dans ta VM Linux, tu dois avoir :
+
+SSH installé
+
+Le port SSH (22) ouvert dans VirtualBox
+
+PostgreSQL/MySQL qui écoute en local (listen_addresses = 'localhost')
+
+Dans Windows, tu dois avoir :
+
+OpenSSH client (déjà intégré dans Windows 10/11)
+
+Node.js
+
+🟢 3. Configurer Linux (invité VirtualBox)
+3.1 Installer SSH
+
+Sur Ubuntu :
+
+sudo apt update
+sudo apt install openssh-server
+sudo systemctl enable ssh
+sudo systemctl start ssh
+
+
+Vérifier :
+
+systemctl status ssh
+
+3.2 Installer PostgreSQL ou MySQL
+
+(Exemple PostgreSQL)
+
+sudo apt install postgresql
+
+
+Vérifier qu'il écoute uniquement en local (très important) :
+
+sudo nano /etc/postgresql/14/main/postgresql.conf
+
+
+Assure-toi que :
+
+listen_addresses = 'localhost'
+
+
+➡️ Ainsi, la base est complètement isolée dans Linux.
+
+🟢 4. Configurer VirtualBox pour SSH
+Option A (recommandée) : NAT + Port Forwarding
+
+VirtualBox → ta VM → Configuration
+
+Réseau
+
+Mode d’accès : NAT
+
+Avancé → Redirection de ports
+
+Ajouter une règle :
+
+Nom	Protocole	IP Hôte	Port Hôte	IP invité	Port invité
+SSH	TCP	127.0.0.1	2222	10.0.2.15	22
+
+(10.0.2.15 = IP NAT standard des VMs VirtualBox)
+
+🟢 5. Création du tunnel SSH depuis Windows
+
+Dans PowerShell ou CMD, exécute :
+
+ssh -L 5432:localhost:5432 -p 2222 user@127.0.0.1
+
+
+Explication :
+
+-L 5432:localhost:5432 → redirige ton port Windows 5432 vers la base Linux
+
+-p 2222 → port SSH NAT Forwarding
+
+user → ton utilisateur Ubuntu
+
+127.0.0.1 → VirtualBox NAT
+
+Il te demande ton mot de passe Linux → entre-le.
+
+➡️ Le tunnel est maintenant actif.
+➡️ Windows → localhost:5432 → VM Linux (PostgreSQL)
+
+🟢 6. Configuration dans Node.js (Windows)
+
+Ton code ne change presque pas, tu mets juste :
+
+const client = new Client({
+  host: "localhost",
+  port: 5432,
+  user: "postgres",
+  password: "password",
+  database: "transport"
+});
+
+
+⚠️ Même si la base de données est dans Linux,
+tu te connectes comme si elle était dans Windows.
+
+🟢 7. Schéma pour ton rapport (clair et propre)
+┌──────────────────┐                 ┌──────────────────────────┐
+│ Windows (hôte)    │  Tunnel SSH    │ Linux (VirtualBox)        │
+│ Node.js App       │───────────────▶│ PostgreSQL/MySQL           │
+│ localhost:5432    │   crypté       │ écoute : localhost:5432   │
+└──────────────────┘                 └──────────────────────────┘
+          ▲                                     │
+          │ Port Forwarding                     │
+          └─────────────── VirtualBox NAT ──────┘
+
+
+➡️ La base reste isolée dans ta VM Linux.
+➡️ Windows n’y accède que via SSH.
+➡️ Aucun port DB n’est ouvert.
+➡️ Sécurité maximale.
+
+🟢 8. Pourquoi cette méthode est parfaite pour toi
+
+✔️ Tu utilises un seul PC, mais tu simules un environnement pro
+✔️ La base est isolée dans un OS séparé
+✔️ Node.js y accède seulement via tunnel SSH crypté
+✔️ Aucun besoin d’Internet
+✔️ Tout est gratuit
+✔️ Sans exposition réseau = sécurité maximale
