@@ -3,14 +3,13 @@ import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import session from "express-session";
 import ConnectPgSimple from "connect-pg-simple";
+import createMemoryStore from "memorystore";
 import "dotenv/config";
-import pkg from "pg";
 import passport from "passport";
 import { configurePassport } from "./auth";
 import { initRealtime } from "./realtime";
 import { startResourceOptimizationScheduler, runResourceOptimizationCycle } from "./resourceOptimizationService";
-
-const { Pool } = pkg;
+import { hasDatabase, pool } from "./db";
 
 const app = express();
 
@@ -62,19 +61,27 @@ app.use((req, res, next) => {
   next();
 });
 
-// Session store (PostgreSQL)
+// Session store (PostgreSQL or in-memory fallback)
 const pgSession = ConnectPgSimple(session);
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-});
+const MemoryStore = createMemoryStore(session);
+
+const sessionStore = hasDatabase && pool
+  ? new pgSession({
+      pool,
+      createTableIfMissing: true,
+    })
+  : new MemoryStore({
+      checkPeriod: 24 * 60 * 60 * 1000,
+    });
+
+if (!hasDatabase) {
+  log("DATABASE_URL absente : utilisation d'un store de session en mémoire (données non persistées).", "session");
+}
 
 // Express Session config
 app.use(
   session({
-    store: new pgSession({
-      pool,
-      createTableIfMissing: true,
-    }),
+    store: sessionStore,
     secret: process.env.SESSION_SECRET || "your-secret-key-change-in-production",
     resave: false,
     saveUninitialized: false,
@@ -86,20 +93,33 @@ app.use(
   })
 );
 
-configurePassport();
-app.use(passport.initialize());
-app.use(passport.session());
+if (hasDatabase) {
+  configurePassport();
+  app.use(passport.initialize());
+  app.use(passport.session());
+} else {
+  log("Passport désactivé (pas de base de données disponible)", "auth");
+}
 
 // MAIN SERVER FUNCTION
 (async () => {
-  registerRoutes(app);
-  if (process.env.ENABLE_RESOURCE_OPTIMIZATION === "1") {
-    startResourceOptimizationScheduler();
-    void runResourceOptimizationCycle().catch((error) => {
-      console.error("Initial resource optimization cycle failed:", error);
-    });
+  if (hasDatabase) {
+    registerRoutes(app);
+    if (process.env.ENABLE_RESOURCE_OPTIMIZATION === "1") {
+      startResourceOptimizationScheduler();
+      void runResourceOptimizationCycle().catch((error) => {
+        console.error("Initial resource optimization cycle failed:", error);
+      });
+    } else {
+      console.log("Resource optimization disabled (set ENABLE_RESOURCE_OPTIMIZATION=1 to enable)");
+    }
   } else {
-    console.log("Resource optimization disabled (set ENABLE_RESOURCE_OPTIMIZATION=1 to enable)");
+    app.use("/api", (_req, res) => {
+      res.status(503).json({
+        error: "Base de données non configurée",
+        hint: "Ajoutez DATABASE_URL à votre fichier .env pour activer les routes API",
+      });
+    });
   }
 
   // Global error handler
