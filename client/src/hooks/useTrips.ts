@@ -26,9 +26,21 @@ export function useTrips(params?: { depart?: string; arrivee?: string; date?: Da
   });
 }
 
+export function useAdminTrips(filters?: { chauffeurId?: string; date?: Date; status?: string }) {
+  const params: Record<string, string> = {};
+  if (filters?.chauffeurId) params.chauffeurId = filters.chauffeurId;
+  if (filters?.status) params.status = filters.status;
+  if (filters?.date) params.date = filters.date.toISOString().slice(0, 10);
+
+  return useQuery<Trip[]>({
+    queryKey: ["/api/admin/trips", params],
+  });
+}
+
 export function useTrip(id: string) {
   return useQuery<Trip>({
-    queryKey: ["/api/trips", id],
+    // Use full URL in query key so the default queryFn hits /api/trips/:id
+    queryKey: [`/api/trips/${id}`],
   });
 }
 
@@ -71,6 +83,51 @@ export function useDeleteTrip() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/trips"] });
+    },
+  });
+}
+
+export function useAdminCreateTrip() {
+  return useMutation({
+    mutationFn: async (data: any) => {
+      const res = await apiRequest("POST", "/api/admin/trips", data);
+      return await res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/trips"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/trips"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/chauffeur/trips"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/chauffeur/calendar"] });
+    },
+  });
+}
+
+export function useAdminUpdateTrip() {
+  return useMutation({
+    mutationFn: async ({ id, data }: { id: string; data: any }) => {
+      const res = await apiRequest("PATCH", `/api/admin/trips/${id}`, data);
+      return await res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/trips"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/trips"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/chauffeur/trips"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/chauffeur/calendar"] });
+    },
+  });
+}
+
+export function useAdminDeleteTrip() {
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const res = await apiRequest("DELETE", `/api/admin/trips/${id}`);
+      return await res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/trips"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/trips"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/chauffeur/trips"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/chauffeur/calendar"] });
     },
   });
 }

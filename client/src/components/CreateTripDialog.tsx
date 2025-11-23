@@ -16,8 +16,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
-import { useCreateTrip } from "@/hooks/useTrips";
+import { useAdminCreateTrip } from "@/hooks/useTrips";
+import { useUsers } from "@/hooks/useUsers";
+import { useVehicles } from "@/hooks/useVehicles";
 import { Loader2 } from "lucide-react";
 
 interface CreateTripDialogProps {
@@ -25,142 +28,200 @@ interface CreateTripDialogProps {
   onOpenChange: (open: boolean) => void;
 }
 
+const CATEGORIES = [
+  { value: "scolaire", label: "Scolaire" },
+  { value: "medical", label: "Médical" },
+  { value: "prive", label: "Privé" },
+  { value: "livraison", label: "Livraison" },
+  { value: "autre", label: "Autre" },
+] as const;
+
+const STATUSES = [
+  { value: "coming", label: "À venir" },
+  { value: "pending_confirmation", label: "En attente de confirmation" },
+  { value: "completed", label: "Terminé" },
+] as const;
+
 export function CreateTripDialog({ open, onOpenChange }: CreateTripDialogProps) {
   const { toast } = useToast();
-  const createTrip = useCreateTrip();
+  const createTrip = useAdminCreateTrip();
+  const { data: users = [] } = useUsers();
+  const { data: vehicles = [] } = useVehicles();
+
+  const chauffeurs = users.filter((u) => u.role === "CHAUFFEUR");
+
   const [formData, setFormData] = useState({
-    depart: "",
-    arrivee: "",
-    heureDepart: "",
+    date: "",
+    startTime: "",
+    endTime: "",
+    startLocation: "",
+    endLocation: "",
+    category: "scolaire",
+    status: "coming",
     prix: "",
     places: "",
     vehicleId: "",
     chauffeurId: "",
+    notes: "",
   });
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
 
     if (
-      !formData.depart ||
-      !formData.arrivee ||
-      !formData.heureDepart ||
+      !formData.startLocation ||
+      !formData.endLocation ||
+      !formData.date ||
+      !formData.startTime ||
+      !formData.endTime ||
       !formData.prix ||
-      !formData.places
+      !formData.places ||
+      !formData.chauffeurId
     ) {
       toast({
-        title: "Erreur",
-        description: "Veuillez remplir tous les champs obligatoires",
+        title: "Champs manquants",
+        description: "Veuillez remplir tous les champs obligatoires.",
         variant: "destructive",
       });
       return;
     }
 
-    // Convert dates to ISO strings for JSON serialization
-    const departDate = new Date(formData.heureDepart);
-    const arriveeDate = new Date(departDate.getTime() + 2 * 60 * 60 * 1000);
-    
-    createTrip.mutate(
-      {
-        point_depart: formData.depart,
-        point_arrivee: formData.arrivee,
-        heure_depart_prevue: departDate.toISOString(),
-        heure_arrivee_prevue: arriveeDate.toISOString(),
-        prix: formData.prix,
-        places_disponibles: parseInt(formData.places),
-        vehicle_id: formData.vehicleId || undefined,
-        chauffeur_id: formData.chauffeurId || undefined,
+    const payload = {
+      chauffeur_id: formData.chauffeurId,
+      vehicle_id: formData.vehicleId || undefined,
+      date: formData.date,
+      start_time: formData.startTime,
+      end_time: formData.endTime,
+      start_location: formData.startLocation,
+      end_location: formData.endLocation,
+      category: formData.category as (typeof CATEGORIES)[number]["value"],
+      status: formData.status as (typeof STATUSES)[number]["value"],
+      notes: formData.notes || undefined,
+      prix: formData.prix,
+      places_disponibles: parseInt(formData.places, 10),
+    };
+
+    createTrip.mutate(payload, {
+      onSuccess: () => {
+        toast({
+          title: "Trajet créé",
+          description: "Le trajet a été créé avec succès.",
+        });
+        setFormData({
+          date: "",
+          startTime: "",
+          endTime: "",
+          startLocation: "",
+          endLocation: "",
+          category: "scolaire",
+          status: "coming",
+          prix: "",
+          places: "",
+          vehicleId: "",
+          chauffeurId: "",
+          notes: "",
+        });
+        onOpenChange(false);
       },
-      {
-        onSuccess: () => {
-          toast({
-            title: "Succès",
-            description: "Trajet créé avec succès",
-          });
-          setFormData({
-            depart: "",
-            arrivee: "",
-            heureDepart: "",
-            prix: "",
-            places: "",
-            vehicleId: "",
-            chauffeurId: "",
-          });
-          onOpenChange(false);
-        },
-        onError: (error: any) => {
-          toast({
-            title: "Erreur",
-            description: error?.message || "Impossible de créer le trajet",
-            variant: "destructive",
-          });
-        },
-      }
-    );
+      onError: (error: any) => {
+        toast({
+          title: "Erreur",
+          description: error?.message || "Impossible de créer le trajet.",
+          variant: "destructive",
+        });
+      },
+    });
   };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[500px]">
+      <DialogContent className="sm:max-w-[560px]">
         <DialogHeader>
           <DialogTitle>Créer un nouveau trajet</DialogTitle>
           <DialogDescription>
-            Remplissez les informations du trajet
+            L&apos;administrateur configure ici un trajet réel pour un chauffeur.
           </DialogDescription>
         </DialogHeader>
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
-              <Label htmlFor="depart">Départ *</Label>
+              <Label htmlFor="startLocation">Ville de départ *</Label>
               <Input
-                id="depart"
-                placeholder="Tunis"
-                value={formData.depart}
+                id="startLocation"
+                placeholder="Ex: Tunis"
+                value={formData.startLocation}
                 onChange={(e) =>
-                  setFormData({ ...formData, depart: e.target.value })
+                  setFormData((prev) => ({ ...prev, startLocation: e.target.value }))
                 }
                 required
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="arrivee">Arrivée *</Label>
+              <Label htmlFor="endLocation">Ville d&apos;arrivée *</Label>
               <Input
-                id="arrivee"
-                placeholder="Sousse"
-                value={formData.arrivee}
+                id="endLocation"
+                placeholder="Ex: Sousse"
+                value={formData.endLocation}
                 onChange={(e) =>
-                  setFormData({ ...formData, arrivee: e.target.value })
+                  setFormData((prev) => ({ ...prev, endLocation: e.target.value }))
                 }
                 required
               />
             </div>
           </div>
 
-          <div className="space-y-2">
-            <Label htmlFor="heureDepart">Date & Heure de départ *</Label>
-            <Input
-              id="heureDepart"
-              type="datetime-local"
-              value={formData.heureDepart}
-              onChange={(e) =>
-                setFormData({ ...formData, heureDepart: e.target.value })
-              }
-              required
-            />
+          <div className="grid grid-cols-3 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="date">Date *</Label>
+              <Input
+                id="date"
+                type="date"
+                value={formData.date}
+                onChange={(e) =>
+                  setFormData((prev) => ({ ...prev, date: e.target.value }))
+                }
+                required
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="startTime">Heure de début *</Label>
+              <Input
+                id="startTime"
+                type="time"
+                value={formData.startTime}
+                onChange={(e) =>
+                  setFormData((prev) => ({ ...prev, startTime: e.target.value }))
+                }
+                required
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="endTime">Heure de fin *</Label>
+              <Input
+                id="endTime"
+                type="time"
+                value={formData.endTime}
+                onChange={(e) =>
+                  setFormData((prev) => ({ ...prev, endTime: e.target.value }))
+                }
+                required
+              />
+            </div>
           </div>
 
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
-              <Label htmlFor="prix">Prix (DH) *</Label>
+              <Label htmlFor="prix">Prix (DT) *</Label>
               <Input
                 id="prix"
                 type="number"
-                placeholder="50"
+                min={0}
                 step="0.01"
+                placeholder="Ex: 50"
                 value={formData.prix}
                 onChange={(e) =>
-                  setFormData({ ...formData, prix: e.target.value })
+                  setFormData((prev) => ({ ...prev, prix: e.target.value }))
                 }
                 required
               />
@@ -170,41 +231,120 @@ export function CreateTripDialog({ open, onOpenChange }: CreateTripDialogProps) 
               <Input
                 id="places"
                 type="number"
-                placeholder="4"
+                min={1}
+                placeholder="Ex: 4"
                 value={formData.places}
                 onChange={(e) =>
-                  setFormData({ ...formData, places: e.target.value })
+                  setFormData((prev) => ({ ...prev, places: e.target.value }))
                 }
                 required
               />
             </div>
           </div>
 
-          <div className="space-y-2">
-            <Label htmlFor="vehicleId">Véhicule (optionnel)</Label>
-            <Input
-              id="vehicleId"
-              placeholder="ID du véhicule"
-              value={formData.vehicleId}
-              onChange={(e) =>
-                setFormData({ ...formData, vehicleId: e.target.value })
-              }
-            />
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label>Catégorie *</Label>
+              <Select
+                value={formData.category}
+                onValueChange={(value) =>
+                  setFormData((prev) => ({ ...prev, category: value }))
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Choisir une catégorie" />
+                </SelectTrigger>
+                <SelectContent>
+                  {CATEGORIES.map((cat) => (
+                    <SelectItem key={cat.value} value={cat.value}>
+                      {cat.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Statut *</Label>
+              <Select
+                value={formData.status}
+                onValueChange={(value) =>
+                  setFormData((prev) => ({ ...prev, status: value }))
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Statut du trajet" />
+                </SelectTrigger>
+                <SelectContent>
+                  {STATUSES.map((st) => (
+                    <SelectItem key={st.value} value={st.value}>
+                      {st.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label>Chauffeur assigné *</Label>
+              <Select
+                value={formData.chauffeurId}
+                onValueChange={(value) =>
+                  setFormData((prev) => ({ ...prev, chauffeurId: value }))
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Sélectionner un chauffeur" />
+                </SelectTrigger>
+                <SelectContent>
+                  {chauffeurs.map((user) => (
+                    <SelectItem key={user.id} value={user.id}>
+                      {user.prenom} {user.nom}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Véhicule (optionnel)</Label>
+              <Select
+                value={formData.vehicleId}
+                onValueChange={(value) =>
+                  setFormData((prev) => ({ ...prev, vehicleId: value }))
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Aucun véhicule assigné" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="">Aucun véhicule</SelectItem>
+                  {vehicles.map((vehicle) => (
+                    <SelectItem key={vehicle.id} value={vehicle.id}>
+                      {vehicle.immatriculation} • {vehicle.marque} {vehicle.modele}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="chauffeurId">Chauffeur (optionnel)</Label>
-            <Input
-              id="chauffeurId"
-              placeholder="ID du chauffeur"
-              value={formData.chauffeurId}
+            <Label htmlFor="notes">Notes (ordre de mission, consignes...)</Label>
+            <Textarea
+              id="notes"
+              placeholder="Ex: Passage par l'école primaire, vérifier les documents du passager..."
+              value={formData.notes}
               onChange={(e) =>
-                setFormData({ ...formData, chauffeurId: e.target.value })
+                setFormData((prev) => ({ ...prev, notes: e.target.value }))
               }
+              rows={3}
             />
           </div>
 
-          <div className="flex justify-end gap-2 pt-4">
+          <div className="flex justify-end gap-2 pt-2">
             <Button
               type="button"
               variant="outline"
@@ -224,3 +364,4 @@ export function CreateTripDialog({ open, onOpenChange }: CreateTripDialogProps) 
     </Dialog>
   );
 }
+

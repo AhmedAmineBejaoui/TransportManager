@@ -15,7 +15,9 @@ interface UpcomingTrip {
 }
 
 export function DashboardSummary() {
-  const { data: reservations = [] } = useReservations();
+  const { data: reservations = [], isLoading, error } = useReservations();
+  
+  console.log("📊 DashboardSummary - reservations:", reservations, "isLoading:", isLoading, "error:", error);
 
   // Calcul des statistiques
   const totalTrips = Array.isArray(reservations) ? reservations.length : 0;

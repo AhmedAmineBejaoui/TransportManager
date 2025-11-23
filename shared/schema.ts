@@ -1,5 +1,16 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, timestamp, integer, decimal, jsonb, boolean } from "drizzle-orm/pg-core";
+import {
+  pgTable,
+  text,
+  varchar,
+  timestamp,
+  integer,
+  decimal,
+  jsonb,
+  boolean,
+  date as pgDate,
+  time as pgTime,
+} from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -57,6 +68,17 @@ export const trips = pgTable("trips", {
   statut: text("statut").default("planifie"), // planifie | en_cours | termine | annule
   places_disponibles: integer("places_disponibles").notNull(),
   distance_km: integer("distance_km").default(0),
+  // Champs calendriers admin/chauffeur
+  trip_date: pgDate("trip_date"),
+  start_time: pgTime("start_time"),
+  end_time: pgTime("end_time"),
+  start_location: text("start_location"),
+  end_location: text("end_location"),
+  category: text("category"), // scolaire | medical | prive | livraison | autre
+  status: text("status"), // coming | completed | pending_confirmation
+  notes: text("notes"),
+  created_at: timestamp("created_at").defaultNow(),
+  updated_at: timestamp("updated_at").defaultNow(),
 });
 
 export const reservations = pgTable("reservations", {

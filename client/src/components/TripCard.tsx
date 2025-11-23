@@ -4,15 +4,15 @@ import { useEffect, useState } from "react";
 import QRCode from "qrcode";
 import { Badge } from "@/components/ui/badge";
 import { MapPin, Clock, Users, Calendar } from "lucide-react";
-import { format } from "date-fns";
+import { format, parseISO, isValid } from "date-fns";
 import { fr } from "date-fns/locale";
 
 export type TripCardProps = {
   id: string;
   depart: string;
   arrivee: string;
-  heureDepart: Date;
-  heureArrivee: Date;
+  heureDepart?: Date | string | number | null;
+  heureArrivee?: Date | string | number | null;
   prix: number;
   placesDisponibles: number;
   capaciteTotal?: number;
@@ -65,14 +65,40 @@ export function TripCard(props: Readonly<TripCardProps>) {
 
       <CardContent className="space-y-3">
         <div className="grid grid-cols-2 gap-3 text-sm">
-          <div className="flex items-center gap-2">
-            <Calendar className="h-4 w-4 text-muted-foreground" />
-            <span>{format(heureDepart, "dd MMM yyyy", { locale: fr })}</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <Clock className="h-4 w-4 text-muted-foreground" />
-            <span>{format(heureDepart, "HH:mm", { locale: fr })}</span>
-          </div>
+          {/** Safe date parsing and rendering: avoid calling format on invalid dates */}
+          {(() => {
+            const toDate = (d?: Date | string | number | null): Date | null => {
+              if (!d) return null;
+              if (d instanceof Date) return isValid(d) ? d : null;
+              if (typeof d === "number") {
+                const dt = new Date(d);
+                return isValid(dt) ? dt : null;
+              }
+              if (typeof d === "string") {
+                // try ISO parse first
+                const parsed = parseISO(d);
+                if (isValid(parsed)) return parsed;
+                // fallback to Date constructor for other formats
+                const dt2 = new Date(d);
+                return isValid(dt2) ? dt2 : null;
+              }
+              return null;
+            };
+
+            const dep = toDate(heureDepart);
+            return (
+              <>
+                <div className="flex items-center gap-2">
+                  <Calendar className="h-4 w-4 text-muted-foreground" />
+                  <span>{dep ? format(dep, "dd MMM yyyy", { locale: fr }) : "--"}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Clock className="h-4 w-4 text-muted-foreground" />
+                  <span>{dep ? format(dep, "HH:mm", { locale: fr }) : "--:--"}</span>
+                </div>
+              </>
+            );
+          })()}
         </div>
 
         {chauffeur && (

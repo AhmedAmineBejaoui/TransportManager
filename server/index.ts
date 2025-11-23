@@ -3,31 +3,47 @@ import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import session from "express-session";
 import ConnectPgSimple from "connect-pg-simple";
-import createMemoryStore from "memorystore";
 import "dotenv/config";
+import pkg from "pg";
 import passport from "passport";
 import { configurePassport } from "./auth";
 import { initRealtime } from "./realtime";
-import { startResourceOptimizationScheduler, runResourceOptimizationCycle } from "./resourceOptimizationService";
-import { hasDatabase, pool } from "./db";
+import {
+  startResourceOptimizationScheduler,
+  runResourceOptimizationCycle,
+} from "./resourceOptimizationService";
+
+import cors from "cors"; // 🔥 ajouté
+
+const { Pool } = pkg;
 
 const app = express();
 
 // Extend IncomingMessage
-declare module 'http' {
+declare module "http" {
   interface IncomingMessage {
-    rawBody: unknown
+    rawBody: unknown;
   }
 }
 
 // JSON parser preserving raw body
-app.use(express.json({
-  verify: (req, _res, buf) => {
-    req.rawBody = buf;
-  }
-}));
+app.use(
+  express.json({
+    verify: (req, _res, buf) => {
+      req.rawBody = buf;
+    },
+  })
+);
 
 app.use(express.urlencoded({ extended: false }));
+
+// 🔥🔥 CRITICAL FIX FOR COOKIES IN DEV
+app.use(
+  cors({
+    origin: "http://localhost:5173",
+    credentials: true,
+  })
+);
 
 // Logging middleware
 app.use((req, res, next) => {
@@ -61,65 +77,50 @@ app.use((req, res, next) => {
   next();
 });
 
-// Session store (PostgreSQL or in-memory fallback)
+// Session store (PostgreSQL)
 const pgSession = ConnectPgSimple(session);
-const MemoryStore = createMemoryStore(session);
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+});
 
-const sessionStore = hasDatabase && pool
-  ? new pgSession({
-      pool,
-      createTableIfMissing: true,
-    })
-  : new MemoryStore({
-      checkPeriod: 24 * 60 * 60 * 1000,
-    });
-
-if (!hasDatabase) {
-  log("DATABASE_URL absente : utilisation d'un store de session en mémoire (données non persistées).", "session");
-}
-
-// Express Session config
+// ✔ COOKIE FIX FOR LOCALHOST – MUST BE BEFORE PASSPORT
 app.use(
   session({
-    store: sessionStore,
-    secret: process.env.SESSION_SECRET || "your-secret-key-change-in-production",
+    store: new pgSession({
+      pool,
+      createTableIfMissing: true,
+    }),
+    secret:
+      process.env.SESSION_SECRET || "your-secret-key-change-in-production",
     resave: false,
     saveUninitialized: false,
+    rolling: true, // 🔥 refresh session on each request
     cookie: {
-      maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
+      maxAge: 30 * 24 * 60 * 60 * 1000,
       httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
+      secure: false, // 🔥 required on Windows/localhost
+      sameSite: "lax",
     },
   })
 );
 
-if (hasDatabase) {
-  configurePassport();
-  app.use(passport.initialize());
-  app.use(passport.session());
-} else {
-  log("Passport désactivé (pas de base de données disponible)", "auth");
-}
+configurePassport();
+app.use(passport.initialize());
+app.use(passport.session());
 
 // MAIN SERVER FUNCTION
 (async () => {
-  if (hasDatabase) {
-    registerRoutes(app);
-    if (process.env.ENABLE_RESOURCE_OPTIMIZATION === "1") {
-      startResourceOptimizationScheduler();
-      void runResourceOptimizationCycle().catch((error) => {
-        console.error("Initial resource optimization cycle failed:", error);
-      });
-    } else {
-      console.log("Resource optimization disabled (set ENABLE_RESOURCE_OPTIMIZATION=1 to enable)");
-    }
-  } else {
-    app.use("/api", (_req, res) => {
-      res.status(503).json({
-        error: "Base de données non configurée",
-        hint: "Ajoutez DATABASE_URL à votre fichier .env pour activer les routes API",
-      });
+  registerRoutes(app);
+
+  if (process.env.ENABLE_RESOURCE_OPTIMIZATION === "1") {
+    startResourceOptimizationScheduler();
+    void runResourceOptimizationCycle().catch((error) => {
+      console.error("Initial resource optimization cycle failed:", error);
     });
+  } else {
+    console.log(
+      "Resource optimization disabled (set ENABLE_RESOURCE_OPTIMIZATION=1 to enable)"
+    );
   }
 
   // Global error handler
@@ -135,21 +136,18 @@ if (hasDatabase) {
   const port = parseInt(process.env.PORT || "5000", 10);
 
   /**
-   * ✔ IMPORTANT FIX FOR WINDOWS + NODE 24
-   * - host must NOT be "0.0.0.0"
-   * - reusePort must NOT be used (unsupported on Windows)
-   * - we use "127.0.0.1" which is perfect for:
-   *   → local dev
-   *   → SSH tunnel Linux ↔ Windows
-   *   → security (isolated API)
+   * ✔ WINDOWS + NODE 18+ FIX
+   * - host must be 127.0.0.1 (NOT 0.0.0.0)
+   * - reusePort must not be used
    */
-  const server = app.listen(port, "127.0.0.1", () => {
-    log(`Server running at http://127.0.0.1:${port}`);
+  const server = app.listen(port, "localhost", () => {
+    log(`Server running at http://localhost:${port}`);
   });
 
-  // VITE (only in development)
+  // Realtime
   initRealtime(server);
 
+  // Vite in dev
   if (app.get("env") === "development") {
     await setupVite(app, server);
   } else {

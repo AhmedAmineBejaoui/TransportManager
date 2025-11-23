@@ -30,7 +30,10 @@ export function useAdminDashboard(entity = "national") {
   return useQuery<AdminDashboardResponse>({
     queryKey: ["/api/admin/dashboard", entity],
     queryFn: async () => {
-      const res = await fetch(`/api/admin/dashboard?entity=${entity}`);
+      const res = await fetch(`/api/admin/dashboard?entity=${entity}`, {
+        credentials: "include",
+        cache: "no-store",
+      });
       if (!res.ok) {
         throw new Error("Impossible de charger le tableau de bord");
       }

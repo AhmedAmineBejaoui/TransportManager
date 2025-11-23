@@ -23,6 +23,7 @@ import {
   type User as TransportUser,
   type ExperiencePersonalization,
   type AccessibilitySetting,
+  type InsertTrip,
   type Trip,
   type Reservation,
   type SearchLog,
@@ -35,6 +36,12 @@ import crypto from "crypto";
 import bcrypt from "bcrypt";
 import passport from "passport";
 import { isRoleAllowed, isAdminRole } from "@shared/roles";
+
+const disableCache = (res: Response) => {
+  res.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+  res.set("Pragma", "no-cache");
+  res.set("Expires", "0");
+};
 
 // Extend Express Request to include user
 declare global {
@@ -52,8 +59,9 @@ declare module "express-session" {
 
 // Middleware to check authentication
 function requireAuth(req: Request, res: Response, next: NextFunction) {
+  console.log("[auth] userId:", req.session.userId, "cookies:", req.cookies ? Object.keys(req.cookies) : "none");
   if (!req.session.userId) {
-    return res.status(401).json({ error: "Non authentifi\u00e9" });
+    return res.status(401).json({ error: "Non authentifié" });
   }
   storage
     .getUser(req.session.userId)
@@ -1129,6 +1137,11 @@ const assistantQuerySchema = z.object({
   question: z.string().min(5),
 });
 
+const assistantReplySchema = z.object({
+  message: z.string().min(2),
+  ticketId: z.string().uuid().optional(),
+});
+
 const notificationRuleSchema = z.object({
   name: z.string().min(3),
   description: z.string().optional(),
@@ -1430,14 +1443,17 @@ export function registerRoutes(app: Express) {
   app.post("/api/auth/login", async (req, res) => {
     try {
       const { email, password } = req.body;
+      console.log("🔐 Login attempt:", email);
       
       const user = await storage.getUserByEmail(email);
       if (!user) {
+        console.log("❌ User not found:", email);
         return res.status(401).json({ error: "Email ou mot de passe incorrect" });
       }
 
       const validPassword = await bcrypt.compare(password, user.password);
       if (!validPassword) {
+        console.log("❌ Invalid password for:", email);
         return res.status(401).json({ error: "Email ou mot de passe incorrect" });
       }
 
@@ -1445,6 +1461,8 @@ export function registerRoutes(app: Express) {
       await storage.updateUser(user.id, { last_login: new Date() });
 
       req.session.userId = user.id;
+      console.log("✅ Login successful:", email, "session.userId:", req.session.userId);
+      
       await storage.logUserActivity({
         user_id: user.id,
         event: "login",
@@ -1455,7 +1473,7 @@ export function registerRoutes(app: Express) {
       const { password: _, ...userWithoutPassword } = user;
       res.json(userWithoutPassword);
     } catch (error) {
-      console.error("Login error:", error);
+      console.error("❌ Login error:", error);
       res.status(500).json({ error: "Erreur serveur" });
     }
   });
@@ -2510,6 +2528,7 @@ export function registerRoutes(app: Express) {
         status,
         limit,
       });
+      disableCache(res);
       res.json(tickets);
     } catch (error) {
       res.status(500).json({ error: "Erreur serveur" });
@@ -2531,6 +2550,7 @@ export function registerRoutes(app: Express) {
         return res.status(403).json({ error: "Accès interdit" });
       }
       const messages = await storage.listTicketMessages(ticket.id);
+      disableCache(res);
       res.json({ ticket, messages });
     } catch (error) {
       res.status(500).json({ error: "Erreur serveur" });
@@ -2670,6 +2690,50 @@ export function registerRoutes(app: Express) {
       if (error instanceof z.ZodError) {
         return res.status(400).json({ error: "Question invalide", details: error.errors });
       }
+      res.status(500).json({ error: "Erreur serveur" });
+    }
+  });
+
+  app.post("/api/support/assistant-reply", requireAuth, async (req, res) => {
+    try {
+      const payload = assistantReplySchema.parse(req.body);
+      const ollamaResponse = await fetch("http://localhost:11434/api/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: process.env.OLLAMA_MODEL || "llama3.2",
+          prompt: `Tu es le dispatch d'une société de transport. Réponds brièvement, professionnellement. Message: ${payload.message}`,
+          stream: false,
+        }),
+      });
+
+      if (!ollamaResponse.ok) {
+        const errorText = await ollamaResponse.text();
+        return res.status(502).json({ error: "Ollama indisponible", details: errorText });
+      }
+
+      const data = await ollamaResponse.json();
+      const reply =
+        (typeof data.response === "string" && data.response.trim()) ||
+        (typeof data.message === "string" && data.message.trim()) ||
+        "";
+
+      if (payload.ticketId && reply) {
+        await storage.addTicketMessage({
+          ticket_id: payload.ticketId,
+          sender_id: null,
+          role: "assistant",
+          message: reply,
+        });
+        await storage.updateSupportTicket(payload.ticketId, { statut: "pending" });
+      }
+
+      res.json({ reply });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: "Message invalide", details: error.errors });
+      }
+      console.error("assistant-reply error", error);
       res.status(500).json({ error: "Erreur serveur" });
     }
   });
@@ -2999,7 +3063,193 @@ export function registerRoutes(app: Express) {
   });
 
   // ==================== TRIP ROUTES ====================
+
+  const tripCategorySchema = z.enum(["scolaire", "medical", "prive", "livraison", "autre"]);
+  const tripStatusSchema = z.enum(["coming", "completed", "pending_confirmation"]);
+
+  const adminTripPayloadBaseSchema = z.object({
+    chauffeur_id: z.string().uuid(),
+    vehicle_id: z.string().uuid().optional(),
+    date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    start_time: z.string().regex(/^\d{2}:\d{2}$/),
+    end_time: z.string().regex(/^\d{2}:\d{2}$/),
+    start_location: z.string().min(1),
+    end_location: z.string().min(1),
+    category: tripCategorySchema,
+    status: tripStatusSchema,
+    notes: z.string().max(2000).optional(),
+    prix: z.union([z.string(), z.number()]).optional(),
+    places_disponibles: z.number().int().positive().optional(),
+    distance_km: z.number().int().nonnegative().optional(),
+  });
+
+  const adminTripCreateSchema = adminTripPayloadBaseSchema;
+  const adminTripUpdateSchema = adminTripPayloadBaseSchema.partial();
+
+  const mapAdminStatusToTripStatut = (status: z.infer<typeof tripStatusSchema>): string => {
+    if (status === "completed") return "termine";
+    // coming & pending_confirmation are des variantes de trajets planifies
+    return "planifie";
+  };
+
+  const buildInsertTripFromAdminPayload = (payload: z.infer<typeof adminTripCreateSchema>): InsertTrip => {
+    const departure = new Date(`${payload.date}T${payload.start_time}:00`);
+    const arrival = new Date(`${payload.date}T${payload.end_time}:00`);
+
+    const base: InsertTrip = {
+      point_depart: payload.start_location,
+      point_arrivee: payload.end_location,
+      heure_depart_prevue: departure,
+      heure_arrivee_prevue: arrival,
+      prix: payload.prix !== undefined ? String(payload.prix) : "0",
+      chauffeur_id: payload.chauffeur_id,
+      vehicle_id: payload.vehicle_id,
+      statut: mapAdminStatusToTripStatut(payload.status),
+      places_disponibles: payload.places_disponibles ?? 4,
+      distance_km: payload.distance_km ?? 0,
+      trip_date: payload.date,
+      start_time: payload.start_time,
+      end_time: payload.end_time,
+      start_location: payload.start_location,
+      end_location: payload.end_location,
+      category: payload.category,
+      status: payload.status,
+      notes: payload.notes,
+    };
+
+    return base;
+  };
   
+  // Admin trip management
+  app.get("/api/admin/trips", requireRole("ADMIN"), async (req, res) => {
+    try {
+      const { chauffeurId, date, status } = req.query;
+
+      const filters = {
+        chauffeurId: (chauffeurId as string) || undefined,
+        status: (status as string) || undefined,
+        date: date ? new Date(date as string) : undefined,
+      };
+
+      const trips = await storage.searchAdminTrips(filters);
+      res.json(trips);
+    } catch (error) {
+      res.status(500).json({ error: "Erreur serveur" });
+    }
+  });
+
+  app.get("/api/admin/trips/:id", requireRole("ADMIN"), async (req, res) => {
+    try {
+      const trip = await storage.getTrip(req.params.id);
+      if (!trip) {
+        return res.status(404).json({ error: "Trajet non trouv\u00e9" });
+      }
+      res.json(trip);
+    } catch (error) {
+      res.status(500).json({ error: "Erreur serveur" });
+    }
+  });
+
+  app.post("/api/admin/trips", requireRole("ADMIN"), async (req, res) => {
+    try {
+      const payload = adminTripCreateSchema.parse(req.body);
+      const insertTrip = buildInsertTripFromAdminPayload(payload);
+      const trip = await storage.createTrip(insertTrip);
+      res.status(201).json(trip);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: "Donn\u00e9es invalides", details: error.errors });
+      }
+      res.status(500).json({ error: "Erreur serveur" });
+    }
+  });
+
+  app.patch("/api/admin/trips/:id", requireRole("ADMIN"), async (req, res) => {
+    try {
+      const payload = adminTripUpdateSchema.parse(req.body);
+      const existing = await storage.getTrip(req.params.id);
+
+      if (!existing) {
+        return res.status(404).json({ error: "Trajet non trouv\u00e9" });
+      }
+
+      const patch: Partial<InsertTrip> = {};
+
+      if (payload.chauffeur_id !== undefined) {
+        patch.chauffeur_id = payload.chauffeur_id;
+      }
+      if (payload.vehicle_id !== undefined) {
+        patch.vehicle_id = payload.vehicle_id;
+      }
+      if (payload.start_location !== undefined) {
+        patch.point_depart = payload.start_location;
+        patch.start_location = payload.start_location;
+      }
+      if (payload.end_location !== undefined) {
+        patch.point_arrivee = payload.end_location;
+        patch.end_location = payload.end_location;
+      }
+      if (payload.category !== undefined) {
+        patch.category = payload.category;
+      }
+      if (payload.status !== undefined) {
+        patch.status = payload.status;
+        patch.statut = mapAdminStatusToTripStatut(payload.status);
+      }
+      if (payload.notes !== undefined) {
+        patch.notes = payload.notes;
+      }
+      if (payload.prix !== undefined) {
+        patch.prix = String(payload.prix);
+      }
+      if (payload.places_disponibles !== undefined) {
+        patch.places_disponibles = payload.places_disponibles;
+      }
+      if (payload.distance_km !== undefined) {
+        patch.distance_km = payload.distance_km;
+      }
+
+      if (payload.date !== undefined || payload.start_time !== undefined || payload.end_time !== undefined) {
+        const currentDate =
+          payload.date ||
+          new Date(existing.heure_depart_prevue!).toISOString().slice(0, 10);
+
+        const existingStartTime =
+          existing.start_time ||
+          (existing.heure_depart_prevue ? new Date(existing.heure_depart_prevue).toISOString().slice(11, 16) : "08:00");
+        const existingEndTime =
+          existing.end_time ||
+          (existing.heure_arrivee_prevue ? new Date(existing.heure_arrivee_prevue).toISOString().slice(11, 16) : "09:00");
+
+        const startTime = payload.start_time || existingStartTime;
+        const endTime = payload.end_time || existingEndTime;
+
+        patch.trip_date = currentDate as any;
+        patch.start_time = startTime as any;
+        patch.end_time = endTime as any;
+        patch.heure_depart_prevue = new Date(`${currentDate}T${startTime}:00`);
+        patch.heure_arrivee_prevue = new Date(`${currentDate}T${endTime}:00`);
+      }
+
+      const updated = await storage.updateTrip(req.params.id, patch);
+      res.json(updated);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: "Donn\u00e9es invalides", details: error.errors });
+      }
+      res.status(500).json({ error: "Erreur serveur" });
+    }
+  });
+
+  app.delete("/api/admin/trips/:id", requireRole("ADMIN"), async (req, res) => {
+    try {
+      await storage.deleteTrip(req.params.id);
+      res.json({ message: "Trajet supprim\u00e9" });
+    } catch (error) {
+      res.status(500).json({ error: "Erreur serveur" });
+    }
+  });
+
   // Search/Get all trips
   app.get("/api/trips", async (req, res) => {
     try {
@@ -3104,6 +3354,44 @@ export function registerRoutes(app: Express) {
       const user = await storage.getUser(req.session.userId!);
       const trips = await storage.getTripsByChauffeur(user!.id);
       res.json(trips);
+    } catch (error) {
+      res.status(500).json({ error: "Erreur serveur" });
+    }
+  });
+
+  // Chauffeur calendar (grouped view)
+  app.get("/api/chauffeur/calendar", requireRole("CHAUFFEUR", "ADMIN"), async (req, res) => {
+    try {
+      const chauffeurId = req.user!.id;
+      const trips = await storage.getTripsByChauffeur(chauffeurId);
+      const now = new Date();
+
+      const byDate: Record<string, Trip[]> = {};
+      let upcoming = 0;
+      let completed = 0;
+
+      for (const trip of trips) {
+        const departure = new Date(trip.heure_depart_prevue);
+        const key = departure.toISOString().slice(0, 10);
+        if (!byDate[key]) byDate[key] = [];
+        byDate[key].push(trip);
+
+        if (trip.statut === "termine" || departure < now) {
+          completed += 1;
+        } else {
+          upcoming += 1;
+        }
+      }
+
+      res.json({
+        trips,
+        byDate,
+        counts: {
+          total: trips.length,
+          upcoming,
+          completed,
+        },
+      });
     } catch (error) {
       res.status(500).json({ error: "Erreur serveur" });
     }

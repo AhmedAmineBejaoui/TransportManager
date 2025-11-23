@@ -20,6 +20,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useChauffeurTrips, useUpdateTrip } from "@/hooks/useTrips";
 import { normalizeTripStatus } from "@/lib/formatters";
 import { useChauffeurStats, useChauffeurIncidents, useCreateIncident } from "@/hooks/useChauffeurInsights";
+import { SupportChatDrawer } from "@/components/SupportChatDrawer";
 
 const incidentOptions = [
   { value: "trafic", label: "Trafic dense" },
@@ -38,6 +39,7 @@ export default function ChauffeurDashboard() {
   const { toast } = useToast();
   const [incidentType, setIncidentType] = useState("trafic");
   const [incidentDescription, setIncidentDescription] = useState("");
+  const [chatOpen, setChatOpen] = useState(false);
 
   const statusConfig = {
     planifie: { label: "Planifié", className: "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300" },
@@ -128,7 +130,7 @@ export default function ChauffeurDashboard() {
           <CardContent className="space-y-2 text-sm">
             <p>Hotline : +216 71 000 000</p>
             <p>Radio : Canal 12 “TransportPro”</p>
-            <Button className="w-full" variant="outline">
+            <Button className="w-full" variant="outline" onClick={() => setChatOpen(true)}>
               Ouvrir le chat
             </Button>
           </CardContent>
@@ -273,6 +275,8 @@ export default function ChauffeurDashboard() {
           </CardContent>
         </Card>
       </div>
+
+      <SupportChatDrawer open={chatOpen} onOpenChange={setChatOpen} />
     </div>
   );
 }

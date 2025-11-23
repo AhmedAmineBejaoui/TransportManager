@@ -24,6 +24,8 @@ import AdminStats from "@/pages/AdminStats";
 import SettingsPage from "@/pages/SettingsPage";
 import ProfilePage from "@/pages/ProfilePage";
 import ChauffeurDashboard from "@/pages/ChauffeurDashboard";
+import ChauffeurCalendar from "@/pages/ChauffeurCalendar";
+import ChauffeurVehicle from "@/pages/ChauffeurVehicle";
 import NotFound from "@/pages/not-found";
 import QuickReserve from "@/pages/QuickReserve";
 import AdminScanner from "@/pages/AdminScanner";
@@ -186,6 +188,24 @@ function Router() {
         {isAuthenticated && userRole === "CHAUFFEUR" ? (
           <AuthenticatedLayout userRole={userRole} userName={userName}>
             <ChauffeurDashboard />
+          </AuthenticatedLayout>
+        ) : (
+          <LoginPage />
+        )}
+      </Route>
+      <Route path="/chauffeur/calendar">
+        {isAuthenticated && userRole === "CHAUFFEUR" ? (
+          <AuthenticatedLayout userRole={userRole} userName={userName}>
+            <ChauffeurCalendar />
+          </AuthenticatedLayout>
+        ) : (
+          <LoginPage />
+        )}
+      </Route>
+      <Route path="/chauffeur/vehicle">
+        {isAuthenticated && userRole === "CHAUFFEUR" ? (
+          <AuthenticatedLayout userRole={userRole} userName={userName}>
+            <ChauffeurVehicle />
           </AuthenticatedLayout>
         ) : (
           <LoginPage />

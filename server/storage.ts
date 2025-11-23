@@ -172,6 +172,7 @@ export interface IStorage {
   getAllTrips(): Promise<Trip[]>;
   getTripsByIds(ids: string[]): Promise<Trip[]>;
   searchTrips(params: { depart?: string; arrivee?: string; date?: Date }): Promise<Trip[]>;
+  searchAdminTrips(params: { chauffeurId?: string; date?: Date; status?: string }): Promise<Trip[]>;
   createTrip(trip: InsertTrip): Promise<Trip>;
   updateTrip(id: string, trip: Partial<InsertTrip>): Promise<Trip | undefined>;
   deleteTrip(id: string): Promise<void>;
@@ -416,6 +417,42 @@ export class DbStorage implements IStorage {
           gte(trips.heure_depart_prevue, startOfDay),
           sql`${trips.heure_depart_prevue} <= ${endOfDay}`
         )
+      );
+    }
+
+    if (conditions.length === 0) {
+      return await this.getAllTrips();
+    }
+
+    return await db
+      .select()
+      .from(trips)
+      .where(and(...conditions))
+      .orderBy(trips.heure_depart_prevue);
+  }
+
+  async searchAdminTrips(params: { chauffeurId?: string; date?: Date; status?: string }): Promise<Trip[]> {
+    const conditions = [];
+
+    if (params.chauffeurId) {
+      conditions.push(eq(trips.chauffeur_id, params.chauffeurId));
+    }
+
+    if (params.status) {
+      conditions.push(eq(trips.status, params.status));
+    }
+
+    if (params.date) {
+      const startOfDay = new Date(params.date);
+      startOfDay.setHours(0, 0, 0, 0);
+      const endOfDay = new Date(params.date);
+      endOfDay.setHours(23, 59, 59, 999);
+
+      conditions.push(
+        and(
+          gte(trips.heure_depart_prevue, startOfDay),
+          sql`${trips.heure_depart_prevue} <= ${endOfDay}`,
+        ),
       );
     }
 
@@ -1759,5 +1796,3 @@ type UserHealthMetrics = {
 };
 
 export const storage = new DbStorage();
-
-

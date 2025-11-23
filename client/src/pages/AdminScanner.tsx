@@ -75,7 +75,13 @@ export default function AdminScanner() {
       const obj = JSON.parse(text);
       if (obj.reservationId && obj.token) {
         // call validation endpoint
-        const res = await fetch(`/api/tickets/validate?reservationId=${encodeURIComponent(obj.reservationId)}&token=${encodeURIComponent(obj.token)}`);
+        const res = await fetch(
+          `/api/tickets/validate?reservationId=${encodeURIComponent(obj.reservationId)}&token=${encodeURIComponent(obj.token)}`,
+          {
+            credentials: "include",
+            cache: "no-store",
+          }
+        );
         const data = await res.json();
         if (res.ok) {
           setValidated({ valid: true, reservation: data.reservation });
@@ -96,7 +102,8 @@ export default function AdminScanner() {
       const res = await fetch(`/api/reservations/${encodeURIComponent(reservationId)}/checkin`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        credentials: "same-origin",
+        credentials: "include",
+        cache: "no-store",
       });
       const data = await res.json();
       if (res.ok) {
