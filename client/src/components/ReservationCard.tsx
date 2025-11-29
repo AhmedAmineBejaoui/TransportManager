@@ -13,17 +13,42 @@ export type ReservationCardProps = {
   nombrePlaces: number;
   numeroSiege?: string;
   montantTotal: number;
-  statut: "en_attente" | "confirme" | "annule" | "termine";
+  // Workflow métier côté client :
+  // pending_payment -> réservation créée, en attente de paiement
+  // paid            -> paiement validé
+  // annule          -> réservation annulée
+  // termine         -> trajet réalisé
+  statut: "pending_payment" | "paid" | "annule" | "termine";
   dateReservation: Date;
   onCancel?: () => void;
+  onPay?: () => void;
   qrText?: string;
 };
 
-const statusConfig = {
-  en_attente: { label: "En attente", className: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300" },
-  confirme: { label: "Confirmé", className: "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300" },
-  annule: { label: "Annulé", className: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300" },
-  termine: { label: "Terminé", className: "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-300" },
+const statusConfig: Record<
+  ReservationCardProps["statut"],
+  { label: string; className: string }
+> = {
+  pending_payment: {
+    label: "En attente de paiement",
+    className:
+      "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300",
+  },
+  paid: {
+    label: "Payée",
+    className:
+      "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300",
+  },
+  annule: {
+    label: "Annulée",
+    className:
+      "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300",
+  },
+  termine: {
+    label: "Terminée",
+    className:
+      "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-300",
+  },
 };
 
 export function ReservationCard({
@@ -37,10 +62,12 @@ export function ReservationCard({
   statut,
   dateReservation,
   onCancel,
+  onPay,
   qrText,
 }: ReservationCardProps) {
   const status = statusConfig[statut];
-  const canCancel = statut === "en_attente" || statut === "confirme";
+  const canCancel = statut === "pending_payment" || statut === "paid";
+  const canPay = statut === "pending_payment" && !!onPay;
 
   return (
     <Card data-testid={`card-reservation-${id}`}>
@@ -48,7 +75,10 @@ export function ReservationCard({
         <CardTitle className="text-base">
           Réservation #{id.slice(0, 8)}
         </CardTitle>
-        <Badge className={status.className} data-testid={`badge-reservation-status-${id}`}>
+        <Badge
+          className={status.className}
+          data-testid={`badge-reservation-status-${id}`}
+        >
           {status.label}
         </Badge>
       </CardHeader>
@@ -71,11 +101,15 @@ export function ReservationCard({
         <div className="grid grid-cols-2 gap-3 text-sm pt-2 border-t">
           <div className="flex items-center gap-2">
             <Calendar className="h-4 w-4 text-muted-foreground" />
-            <span>{format(heureDepart, "dd MMM yyyy, HH:mm", { locale: fr })}</span>
+            <span>
+              {format(heureDepart, "dd MMM yyyy, HH:mm", { locale: fr })}
+            </span>
           </div>
           <div className="flex items-center gap-2">
             <Users className="h-4 w-4 text-muted-foreground" />
-            <span>{nombrePlaces} place{nombrePlaces > 1 ? "s" : ""}</span>
+            <span>
+              {nombrePlaces} place{nombrePlaces > 1 ? "s" : ""}
+            </span>
           </div>
         </div>
 
@@ -90,10 +124,23 @@ export function ReservationCard({
           <span className="text-sm text-muted-foreground">
             Réservé le {format(dateReservation, "dd MMM yyyy", { locale: fr })}
           </span>
-          <span className="text-lg font-bold text-primary" data-testid={`text-reservation-amount-${id}`}>
+          <span
+            className="text-lg font-bold text-primary"
+            data-testid={`text-reservation-amount-${id}`}
+          >
             {montantTotal} DH
           </span>
         </div>
+
+        {canPay && (
+          <Button
+            className="w-full"
+            onClick={onPay}
+            data-testid={`button-pay-reservation-${id}`}
+          >
+            Payer maintenant
+          </Button>
+        )}
 
         {onCancel && canCancel && (
           <Button
@@ -105,8 +152,18 @@ export function ReservationCard({
             Annuler la réservation
           </Button>
         )}
+
         {qrText && (
-          <Button className="w-full mt-2" onClick={() => window.dispatchEvent(new CustomEvent('open-ticket-modal', { detail: { qrText, reservationId: id } }))}>
+          <Button
+            className="w-full mt-2"
+            onClick={() =>
+              window.dispatchEvent(
+                new CustomEvent("open-ticket-modal", {
+                  detail: { qrText, reservationId: id },
+                }),
+              )
+            }
+          >
             Voir le billet (QR)
           </Button>
         )}
@@ -114,3 +171,4 @@ export function ReservationCard({
     </Card>
   );
 }
+

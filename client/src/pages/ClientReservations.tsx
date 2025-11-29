@@ -3,7 +3,7 @@ import { ReservationCard } from "@/components/ReservationCard";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
-import { useReservations, useCancelReservation } from "@/hooks/useReservations";
+import { useReservations, useCancelReservation, usePayReservation } from "@/hooks/useReservations";
 import { useTrips } from "@/hooks/useTrips";
 import { buildReservationCardModel, normalizeReservationStatus } from "@/lib/formatters";
 
@@ -11,6 +11,7 @@ export default function ClientReservations() {
   const { data: reservations = [], isLoading } = useReservations();
   const { data: trips = [] } = useTrips();
   const cancelReservation = useCancelReservation();
+  const payReservation = usePayReservation();
   const { toast } = useToast();
 
   const tripById = useMemo(() => {
@@ -35,9 +36,27 @@ export default function ClientReservations() {
     });
   };
 
+  const handlePay = (id: string) => {
+    payReservation.mutate(id, {
+      onSuccess: () => {
+        toast({
+          title: "Paiement enregistré",
+          description: "Votre réservation est maintenant marquée comme payée.",
+        });
+      },
+      onError: (error: any) => {
+        toast({
+          title: "Erreur",
+          description: error?.message || "Impossible d'enregistrer le paiement",
+          variant: "destructive",
+        });
+      },
+    });
+  };
+
   const activeReservations = reservations.filter((reservation) => {
     const status = normalizeReservationStatus(reservation.statut);
-    return status === "confirme" || status === "en_attente";
+    return status === "pending_payment" || status === "paid";
   });
   const completedReservations = reservations.filter(
     (reservation) => normalizeReservationStatus(reservation.statut) === "termine"
@@ -90,6 +109,7 @@ export default function ClientReservations() {
                     key={reservation.id}
                     {...card}
                     onCancel={() => handleCancel(reservation.id)}
+                    onPay={() => handlePay(reservation.id)}
                   />
                 );
               })}

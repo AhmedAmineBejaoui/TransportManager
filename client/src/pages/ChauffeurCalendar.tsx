@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import {
   Calendar as CalendarIcon,
   CalendarCheck,
@@ -12,19 +13,22 @@ import {
   TimerReset,
   User,
   AlertTriangle,
+  PhoneCall,
 } from "lucide-react";
+import jsPDF from "jspdf";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Drawer, DrawerContent, DrawerDescription, DrawerFooter, DrawerHeader, DrawerTitle } from "@/components/ui/drawer";
 import { useToast } from "@/hooks/use-toast";
 import { useChauffeurTrips, useUpdateTrip } from "@/hooks/useTrips";
 import { useCreateIncident } from "@/hooks/useChauffeurInsights";
-import type { Trip } from "@shared/schema";
+import type { Trip, Reservation } from "@shared/schema";
 import { normalizeTripStatus } from "@/lib/formatters";
-import { format } from "date-fns";
+import { format, parseISO } from "date-fns";
 import { fr } from "date-fns/locale";
 
 type TripPlanning = {
@@ -36,6 +40,7 @@ type TripPlanning = {
   to: string;
   mission: string;
   status: "a_venir" | "termine" | "off";
+  places_disponibles?: number;
 };
 
 type CalendarDay = {
@@ -64,6 +69,12 @@ const importantEvents = [
     detail: "Journee OFF validee par le dispatch",
     type: "conge",
   },
+];
+
+const samplePassengers = [
+  { name: "Yasmine G.", phone: "+216 22 111 222", seat: "A3", status: "Confirme", note: "Client fidele" },
+  { name: "Karim L.", phone: "+216 52 444 555", seat: "B1", status: "Paye", note: "Bagage volumineux" },
+  { name: "Meriem S.", phone: "+216 98 777 888", seat: "B2", status: "En attente", note: "Arrive 5 min avant" },
 ];
 
 const statusBadge: Record<TripPlanning["status"], string> = {
@@ -101,6 +112,17 @@ function buildTripPlanningFromTrip(trip: Trip): TripPlanning {
     status = "termine";
   }
 
+   // Traduction du workflow métier pour l'affichage chauffeur
+   const workflow = (trip.status ?? "") as string;
+   let mission = "Trajet planifie";
+   if (workflow === "waiting_chauffeur_confirmation") {
+     mission = "Client paye • Trajet a confirmer";
+   } else if (workflow === "confirmed") {
+     mission = "Mission confirmee (client paye)";
+   } else if (workflow === "to_reassign") {
+     mission = "A reassigner par le dispatch";
+   }
+
   return {
     id: trip.id,
     date: toISODate(departDate),
@@ -108,8 +130,9 @@ function buildTripPlanningFromTrip(trip: Trip): TripPlanning {
     end: format(arriveeDate, "HH:mm"),
     from: trip.point_depart,
     to: trip.point_arrivee,
-    mission: "Trajet planifie",
+    mission,
     status,
+    places_disponibles: trip.places_disponibles,
   };
 }
 
@@ -159,6 +182,48 @@ function buildCalendarDays(trips: TripPlanning[]): CalendarDay[] {
   return days;
 }
 
+function generateMissionOrderPdf(trips: TripPlanning[], date: string) {
+  const doc = new jsPDF();
+  const missionDate = parseISO(date);
+
+  doc.setFontSize(16);
+  doc.text("Ordre de mission chauffeur", 14, 18);
+  doc.setFontSize(11);
+  doc.text(`Date : ${format(missionDate, "dd MMMM yyyy", { locale: fr })}`, 14, 28);
+  doc.text(`Nombre de trajets : ${trips.length}`, 14, 36);
+
+  let y = 50;
+  trips.forEach((trip, index) => {
+    if (y > 270) {
+      doc.addPage();
+      y = 20;
+    }
+
+    doc.setFontSize(12);
+    doc.text(`Trajet ${index + 1}`, 14, y);
+    y += 7;
+    doc.setFontSize(11);
+    doc.text(`Heure : ${trip.start} - ${trip.end}`, 14, y);
+    y += 6;
+    doc.text(`Itineraire : ${trip.from} -> ${trip.to}`, 14, y);
+    y += 6;
+    doc.text(`Mission : ${trip.mission}`, 14, y);
+    y += 6;
+    doc.text(
+      `Statut : ${trip.status === "a_venir" ? "A venir" : trip.status === "termine" ? "Termine" : "Off"}`,
+      14,
+      y,
+    );
+    y += 10;
+  });
+
+  doc.setFontSize(10);
+  doc.text("Signature chauffeur: ____________________", 14, y + 8);
+  doc.text("Cachet dispatch: ____________________", 120, y + 8);
+
+  doc.save(`ordre-mission-${date}.pdf`);
+}
+
 export default function ChauffeurCalendar() {
   const { data: trips = [], isLoading } = useChauffeurTrips();
   const updateTrip = useUpdateTrip();
@@ -166,6 +231,8 @@ export default function ChauffeurCalendar() {
   const { toast } = useToast();
   const [view, setView] = useState<"monthly" | "weekly" | "daily">("monthly");
   const [selectedDate, setSelectedDate] = useState<string>(() => toISODate(new Date()));
+  const [passengerDrawerOpen, setPassengerDrawerOpen] = useState(false);
+  const [tripForPassengers, setTripForPassengers] = useState<TripPlanning | null>(null);
 
   const tripPlanning = useMemo<TripPlanning[]>(() => {
     return trips.map((trip) => buildTripPlanningFromTrip(trip));
@@ -191,25 +258,73 @@ export default function ChauffeurCalendar() {
 
   const selectedTrips = tripsByDate[selectedDate] ?? [];
   const selectedDayInfo = calendarDays.find((d) => d.date === selectedDate);
+  const currentTripForPassengers = tripForPassengers;
 
-  const updateTripStatus = (tripId: string, statut: "en_cours" | "termine") => {
+  const { data: passengerReservations = [], isLoading: isLoadingPassengers } = useQuery<Reservation[]>({
+    queryKey: ["/api/trips", currentTripForPassengers?.id, "reservations"],
+    queryFn: async () => {
+      const res = await fetch(`/api/trips/${currentTripForPassengers?.id}/reservations`, { credentials: "include" });
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || "Impossible de charger les passagers");
+      }
+      return (await res.json()) as Reservation[];
+    },
+    enabled: Boolean(currentTripForPassengers?.id),
+  });
+
+  const confirmTrip = (tripId: string) => {
     updateTrip.mutate(
-      { id: tripId, data: { statut } },
+      { id: tripId, data: { status: "confirmed" } as any },
       {
         onSuccess: () => {
           toast({
-            title: statut === "en_cours" ? "Trajet confirme" : "Trajet mis a jour",
-            description: "Le dispatch est informe.",
+            title: "Mission confirmee",
+            description: "Le dispatch est informe que le client a paye.",
           });
         },
         onError: (error: any) =>
           toast({
             title: "Erreur",
-            description: error?.message || "Impossible de mettre a jour le trajet",
+            description: error?.message || "Impossible de confirmer le trajet",
             variant: "destructive",
           }),
-      }
+      },
     );
+  };
+
+  const refuseTrip = (tripId: string) => {
+    updateTrip.mutate(
+      { id: tripId, data: { status: "to_reassign" } as any },
+      {
+        onSuccess: () => {
+          toast({
+            title: "Mission refusee",
+            description: "Le dispatch doit reassigner ce trajet.",
+          });
+        },
+        onError: (error: any) =>
+          toast({
+            title: "Erreur",
+            description: error?.message || "Impossible de refuser le trajet",
+            variant: "destructive",
+          }),
+      },
+    );
+  };
+
+  const handleOpenPassengerDetails = (trip?: TripPlanning) => {
+    const fallbackTrip = trip ?? selectedTrips[0] ?? tripPlanning[0];
+    if (!fallbackTrip) {
+      toast({
+        title: "Aucun trajet",
+        description: "Aucun trajet selectionne pour afficher les passagers.",
+        variant: "destructive",
+      });
+      return;
+    }
+    setTripForPassengers(fallbackTrip);
+    setPassengerDrawerOpen(true);
   };
 
   const handleAction = (title: string, description: string) => {
@@ -241,11 +356,46 @@ export default function ChauffeurCalendar() {
   };
 
   const handleDownload = () => {
+    const fallback = Object.entries(tripsByDate)
+      .filter(([, list]) => list.length > 0)
+      .sort(([a], [b]) => a.localeCompare(b))[0];
+
+    const orderDate = selectedTrips.length > 0 ? selectedDate : fallback?.[0];
+    const tripsForOrder = selectedTrips.length > 0 ? selectedTrips : fallback?.[1] ?? [];
+
+    if (!orderDate || tripsForOrder.length === 0) {
+      toast({
+        title: "Aucun trajet",
+        description: "Aucun trajet disponible pour generer un ordre de mission.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    generateMissionOrderPdf(tripsForOrder, orderDate);
     toast({
       title: "Ordre de mission",
-      description: "Telechargement en cours...",
+      description: `PDF genere pour le ${format(parseISO(orderDate), "dd/MM/yyyy", { locale: fr })}`,
     });
   };
+
+  const reservedSeats = passengerReservations.reduce((sum, reservation) => {
+    const seats = typeof reservation.nombre_places === "number" ? reservation.nombre_places : Number(reservation.nombre_places ?? 0);
+    return sum + (Number.isFinite(seats) ? seats : 0);
+  }, 0);
+  const remainingSeats = tripForPassengers?.places_disponibles ?? 0;
+  const totalSeats = reservedSeats + remainingSeats || undefined;
+
+  const passengerItems =
+    passengerReservations.length > 0
+      ? passengerReservations.map((reservation, index) => ({
+          name: reservation.client_id ? `Client ${reservation.client_id.slice(0, 6)}` : `Passager ${index + 1}`,
+          phone: "Non fourni",
+          seat: reservation.numero_siege ?? `x${reservation.nombre_places} place(s)`,
+          status: reservation.statut ?? "en_attente",
+          note: reservation.checked ? "Check-in effectue" : "En attente de check-in",
+        }))
+      : samplePassengers;
 
   return (
     <div className="space-y-6">
@@ -318,15 +468,29 @@ export default function ChauffeurCalendar() {
                               {trip.status === "a_venir" ? "A venir" : trip.status === "termine" ? "Termine" : "Off"}
                             </Badge>
                             <div className="flex gap-2">
-                              <Button size="sm" variant="outline" onClick={() => setSelectedDate(trip.date)}>
+                              <Button size="sm" variant="ghost" onClick={() => handleOpenPassengerDetails(trip)}>
+                                Passagers
+                              </Button>
+                              <Button size="sm" variant="outline" onClick={() => {
+                                setSelectedDate(trip.date);
+                                setView("daily");
+                              }}>
                                 Voir jour
                               </Button>
                               <Button
                                 size="sm"
-                                onClick={() => updateTripStatus(trip.id, "en_cours")}
+                                onClick={() => confirmTrip(trip.id)}
                                 disabled={trip.status === "termine" || updateTrip.isPending}
                               >
                                 Confirmer
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => refuseTrip(trip.id)}
+                                disabled={trip.status === "termine" || updateTrip.isPending}
+                              >
+                                Refuser
                               </Button>
                             </div>
                           </div>
@@ -363,7 +527,7 @@ export default function ChauffeurCalendar() {
             <Button
               className="w-full justify-start gap-2"
               variant="outline"
-              onClick={() => handleAction("Details client", "Ouverture de la fiche passager")}
+              onClick={() => handleOpenPassengerDetails()}
             >
               <User className="h-4 w-4" />
               Consulter les details passager
@@ -485,11 +649,20 @@ export default function ChauffeurCalendar() {
                         <Button
                           size="sm"
                           variant="outline"
-                          onClick={() => updateTripStatus(trip.id, "en_cours")}
+                          onClick={() => confirmTrip(trip.id)}
                           disabled={trip.status === "termine" || updateTrip.isPending}
                         >
                           <CheckCircle2 className="h-4 w-4 mr-1" />
                           Confirmer
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => refuseTrip(trip.id)}
+                          disabled={trip.status === "termine" || updateTrip.isPending}
+                        >
+                          <CalendarX2 className="h-4 w-4 mr-1" />
+                          Refuser
                         </Button>
                         <Button
                           size="sm"
@@ -502,10 +675,18 @@ export default function ChauffeurCalendar() {
                         <Button
                           size="sm"
                           variant="outline"
-                          onClick={() => handleAction("Ordre de mission", "Ouverture du PDF")}
+                          onClick={handleDownload}
                         >
                           <FileDown className="h-4 w-4 mr-1" />
                           Ordre de mission
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => handleOpenPassengerDetails(trip)}
+                        >
+                          <User className="h-4 w-4 mr-1" />
+                          Passagers
                         </Button>
                       </div>
                     </div>
@@ -563,6 +744,62 @@ export default function ChauffeurCalendar() {
           </CardContent>
         </Card>
       </div>
+
+      <Drawer open={passengerDrawerOpen} onOpenChange={setPassengerDrawerOpen}>
+        <DrawerContent>
+          <DrawerHeader className="text-left">
+            <DrawerTitle>Details passagers</DrawerTitle>
+            <DrawerDescription>
+              {tripForPassengers
+                ? `${tripForPassengers.from} -> ${tripForPassengers.to} | ${tripForPassengers.start} - ${tripForPassengers.end}`
+                : "Selectionnez un trajet pour voir les passagers"}
+            </DrawerDescription>
+          </DrawerHeader>
+          <div className="px-6 pb-6 space-y-4">
+            <div className="flex flex-wrap items-center gap-3 rounded-lg border bg-muted/40 p-3">
+              <Badge variant="outline" className="gap-2">
+                <User className="h-4 w-4" />
+                {passengerReservations.length} reservation(s)
+              </Badge>
+              <Badge variant="outline" className="gap-2">
+                <Clock className="h-4 w-4" />
+                {reservedSeats} place(s) occupees
+              </Badge>
+              <Badge variant="outline" className="gap-2">
+                <CalendarCheck className="h-4 w-4" />
+                {typeof totalSeats === "number" ? `${totalSeats} places totales (estim.)` : "Capacite inconnue"}
+              </Badge>
+            </div>
+
+            <div className="grid gap-3 md:grid-cols-2">
+              {passengerItems.map((passenger, index) => (
+                <div key={`${passenger.name}-${index}`} className="rounded-lg border bg-muted/40 p-3 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 font-semibold">
+                      <User className="h-4 w-4 text-primary" />
+                      <span>{passenger.name}</span>
+                    </div>
+                    <Badge variant="secondary" className="capitalize">
+                      {passenger.status}
+                    </Badge>
+                  </div>
+                  <p className="text-sm text-muted-foreground">Siege / places : {passenger.seat}</p>
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <PhoneCall className="h-4 w-4" />
+                    <span>{passenger.phone}</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground">{passenger.note}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+          <DrawerFooter className="pt-0">
+            <div className="text-xs text-muted-foreground">
+              Les donnees dynamiques proviennent des reservations du trajet. En absence de donnees, une fiche exemple est affichee.
+            </div>
+          </DrawerFooter>
+        </DrawerContent>
+      </Drawer>
     </div>
   );
 }

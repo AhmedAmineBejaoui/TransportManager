@@ -32,7 +32,7 @@ const statusConfig = {
 export function TripCard(props: Readonly<TripCardProps>) {
   const { id, depart, arrivee, heureDepart, prix, placesDisponibles, capaciteTotal, statut, chauffeur, vehicule, onReserver } = props;
   const status = statusConfig[statut];
-  const isAvailable = placesDisponibles > 0 && statut === "planifie";
+  const isAvailable = placesDisponibles > 0 && statut !== "annule" && statut !== "termine";
   let capacityLabel = "";
   if (capaciteTotal) {
     capacityLabel = `${placesDisponibles}/${capaciteTotal} places`;

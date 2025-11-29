@@ -15,13 +15,15 @@ import { useTrip } from "@/hooks/useTrips";
 import { Loader2 } from "lucide-react";
 import QRCode from "qrcode";
 import { useAuth } from "@/lib/auth";
+import { format } from "date-fns";
+import { fr } from "date-fns/locale";
 
 interface CreateReservationDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   tripId: string;
   defaultNombrePlaces?: string;
-  autoSubmit?: boolean; // when opened, submit automatically if authenticated
+  autoSubmit?: boolean;
 }
 
 export function CreateReservationDialog({
@@ -34,7 +36,7 @@ export function CreateReservationDialog({
   const { toast } = useToast();
   const createReservation = useCreateReservation();
   const { data: trip } = useTrip(tripId);
-  const { user, isLoading: authLoading, isAuthenticated } = useAuth();
+  const { isLoading: authLoading, isAuthenticated } = useAuth();
   const [nombrePlaces, setNombrePlaces] = useState(defaultNombrePlaces ?? "1");
 
   const prix = trip?.prix ? Number(trip.prix) : 0;
@@ -43,7 +45,9 @@ export function CreateReservationDialog({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (!nombrePlaces || parseInt(nombrePlaces) < 1) {
+    const requestedPlaces = parseInt(nombrePlaces || "0");
+
+    if (!nombrePlaces || requestedPlaces < 1) {
       toast({
         title: "Erreur",
         description: "Le nombre de places doit être au moins 1",
@@ -52,10 +56,19 @@ export function CreateReservationDialog({
       return;
     }
 
+    if (trip && typeof trip.places_disponibles === "number" && requestedPlaces > trip.places_disponibles) {
+      toast({
+        title: "Places insuffisantes",
+        description: `Il reste seulement ${trip.places_disponibles} place(s) sur ce trajet.`,
+        variant: "destructive",
+      });
+      return;
+    }
+
     createReservation.mutate(
       {
         trip_id: tripId,
-        nombre_places: parseInt(nombrePlaces),
+        nombre_places: requestedPlaces,
         montant_total: montantTotal.toFixed(2),
       },
       {
@@ -67,17 +80,15 @@ export function CreateReservationDialog({
           setNombrePlaces("1");
           onOpenChange(false);
 
-          // If server returned a qr.text field, generate data URL and open a new window showing QR
           try {
             const qrText = reservation?.qr?.text ?? JSON.stringify({ reservationId: reservation.id });
             const dataUrl = await QRCode.toDataURL(qrText);
-            // open in new tab so user can save/scan: render a minimal page with the QR image
-            const html = `<!doctype html><html><head><meta charset="utf-8"><title>Ticket QR</title></head><body style="display:flex;align-items:center;justify-content:center;height:100vh;margin:0"><div style="text-align:center"><img src='${dataUrl}' alt='QR code' /><p>Reservation: ${reservation.id}</p></div></body></html>`;
+            const html = `<!doctype html><html><head><meta charset="utf-8"><title>Ticket QR</title></head><body style="display:flex;align-items:center;justify-content:center;height:100vh;margin:0"><div style="text-align:center"><img src='${dataUrl}' alt='QR code' /><p>Réservation: ${reservation.id}</p></div></body></html>`;
             const blob = new Blob([html], { type: "text/html" });
             const url = URL.createObjectURL(blob);
             window.open(url, "_blank");
-          } catch (err) {
-            // ignore QR generation errors
+          } catch {
+            // ignore QR errors
           }
         },
         onError: (error: any) => {
@@ -87,28 +98,28 @@ export function CreateReservationDialog({
             variant: "destructive",
           });
         },
-      }
+      },
     );
   };
 
   useEffect(() => {
-    // when dialog opens, initialize nombrePlaces
     if (open) {
       setNombrePlaces(defaultNombrePlaces ?? "1");
     }
   }, [open, defaultNombrePlaces]);
 
   useEffect(() => {
-    // if autoSubmit requested and user is authenticated, submit automatically
     if (!open || !autoSubmit) return;
     if (authLoading) return;
     if (!isAuthenticated) return;
-    // auto-submit a single-place reservation
+
+    const requestedPlaces = parseInt(defaultNombrePlaces ?? "1");
+
     createReservation.mutate(
       {
         trip_id: tripId,
-        nombre_places: parseInt(defaultNombrePlaces ?? "1"),
-        montant_total: (Number(trip?.prix ?? 0) * (parseInt(defaultNombrePlaces ?? "1") || 1)).toFixed(2),
+        nombre_places: requestedPlaces,
+        montant_total: (Number(trip?.prix ?? 0) * (requestedPlaces || 1)).toFixed(2),
       },
       {
         onSuccess: async (reservation: any) => {
@@ -118,18 +129,24 @@ export function CreateReservationDialog({
           try {
             const qrText = reservation?.qr?.text ?? JSON.stringify({ reservationId: reservation.id });
             const dataUrl = await QRCode.toDataURL(qrText);
-            const html = `<!doctype html><html><head><meta charset="utf-8"><title>Ticket QR</title></head><body style="display:flex;align-items:center;justify-content:center;height:100vh;margin:0"><div style="text-align:center"><img src='${dataUrl}' alt='QR code' /><p>Reservation: ${reservation.id}</p></div></body></html>`;
+            const html = `<!doctype html><html><head><meta charset="utf-8"><title>Ticket QR</title></head><body style="display:flex;align-items:center;justify-content:center;height:100vh;margin:0"><div style="text-align:center"><img src='${dataUrl}' alt='QR code' /><p>Réservation: ${reservation.id}</p></div></body></html>`;
             const blob = new Blob([html], { type: "text/html" });
             const url = URL.createObjectURL(blob);
             window.open(url, "_blank");
-          } catch (err) {}
+          } catch {
+            // ignore QR errors
+          }
         },
         onError: (error: any) => {
-          toast({ title: "Erreur", description: error?.message || "Impossible de créer la réservation", variant: "destructive" });
+          toast({
+            title: "Erreur",
+            description: error?.message || "Impossible de créer la réservation",
+            variant: "destructive",
+          });
         },
-      }
+      },
     );
-  }, [autoSubmit, authLoading, isAuthenticated, open]);
+  }, [autoSubmit, authLoading, isAuthenticated, open, defaultNombrePlaces, trip, tripId, createReservation, toast, onOpenChange]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -156,16 +173,34 @@ export function CreateReservationDialog({
           </div>
 
           {trip && (
-            <div className="bg-muted p-3 rounded-md">
-              <p className="text-sm">
-                Prix par place:{" "}
-                <span className="font-semibold">{trip.prix} DH</span>
-              </p>
-              <p className="text-sm">
-                Montant total:{" "}
+            <div className="bg-muted p-3 rounded-md space-y-1 text-sm">
+              <p>
+                Trajet :{" "}
                 <span className="font-semibold">
-                  {montantTotal.toFixed(2)} DH
+                  {trip.point_depart} → {trip.point_arrivee}
                 </span>
+              </p>
+              <p>
+                Date :{" "}
+                <span className="font-semibold">
+                  {trip.heure_depart_prevue
+                    ? format(new Date(trip.heure_depart_prevue), "dd MMM yyyy HH:mm", { locale: fr })
+                    : "—"}
+                </span>
+              </p>
+              <p>
+                Places restantes :{" "}
+                <span className="font-semibold">
+                  {typeof trip.places_disponibles === "number" ? trip.places_disponibles : "—"}
+                </span>
+              </p>
+              <p>
+                Prix par place :{" "}
+                <span className="font-semibold">{prix.toFixed(2)} DH</span>
+              </p>
+              <p>
+                Montant total :{" "}
+                <span className="font-semibold">{montantTotal.toFixed(2)} DH</span>
               </p>
             </div>
           )}

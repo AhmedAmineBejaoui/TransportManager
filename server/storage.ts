@@ -118,7 +118,7 @@ import type {
   CobrowsingSignal,
   InsertCobrowsingSignal,
 } from "@shared/schema";
-import { eq, and, gte, lte, desc, or, like, ilike, sql, inArray } from "drizzle-orm";
+import { eq, and, gte, lte, desc, or, like, ilike, sql, inArray, isNull } from "drizzle-orm";
 
 type UpdateUser = Partial<InsertUser> & { last_login?: Date | null };
 type PersonalizationStateInput = {
@@ -172,7 +172,7 @@ export interface IStorage {
   getAllTrips(): Promise<Trip[]>;
   getTripsByIds(ids: string[]): Promise<Trip[]>;
   searchTrips(params: { depart?: string; arrivee?: string; date?: Date }): Promise<Trip[]>;
-  searchAdminTrips(params: { chauffeurId?: string; date?: Date; status?: string }): Promise<Trip[]>;
+  searchAdminTrips(params: { chauffeurId?: string; date?: Date; status?: string; includeUnassigned?: boolean }): Promise<Trip[]>;
   createTrip(trip: InsertTrip): Promise<Trip>;
   updateTrip(id: string, trip: Partial<InsertTrip>): Promise<Trip | undefined>;
   deleteTrip(id: string): Promise<void>;
@@ -431,11 +431,15 @@ export class DbStorage implements IStorage {
       .orderBy(trips.heure_depart_prevue);
   }
 
-  async searchAdminTrips(params: { chauffeurId?: string; date?: Date; status?: string }): Promise<Trip[]> {
+  async searchAdminTrips(params: { chauffeurId?: string; date?: Date; status?: string; includeUnassigned?: boolean }): Promise<Trip[]> {
     const conditions = [];
 
     if (params.chauffeurId) {
-      conditions.push(eq(trips.chauffeur_id, params.chauffeurId));
+      conditions.push(
+        params.includeUnassigned
+          ? or(eq(trips.chauffeur_id, params.chauffeurId), isNull(trips.chauffeur_id))
+          : eq(trips.chauffeur_id, params.chauffeurId),
+      );
     }
 
     if (params.status) {
@@ -486,10 +490,26 @@ export class DbStorage implements IStorage {
   }
 
   async getTripsByChauffeur(chauffeurId: string): Promise<Trip[]> {
+    // Un chauffeur ne voit que les trajets pour lesquels il est affecté
+    // ET pour lesquels il existe au moins une réservation payée.
+    const paidTripRows = await db
+      .select({ trip_id: reservations.trip_id })
+      .from(reservations)
+      .where(
+        // On considère "paid" comme statut de référence et "confirme" comme équivalent historique
+        or(eq(reservations.statut, "paid"), eq(reservations.statut, "confirme")),
+      )
+      .groupBy(reservations.trip_id);
+
+    const tripIds = paidTripRows.map((row) => row.trip_id).filter((id): id is string => Boolean(id));
+    if (tripIds.length === 0) {
+      return [];
+    }
+
     return await db
       .select()
       .from(trips)
-      .where(eq(trips.chauffeur_id, chauffeurId))
+      .where(and(eq(trips.chauffeur_id, chauffeurId), inArray(trips.id, tripIds)))
       .orderBy(trips.heure_depart_prevue);
   }
 

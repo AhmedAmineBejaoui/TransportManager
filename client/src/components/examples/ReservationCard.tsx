@@ -13,7 +13,7 @@ export default function ReservationCardExample() {
           nombrePlaces={2}
           numeroSiege="12, 13"
           montantTotal={100}
-          statut="confirme"
+          statut="paid"
           dateReservation={new Date("2025-01-20T10:30:00")}
           onCancel={() => console.log("Annulation réservation res-001")}
         />
@@ -25,7 +25,7 @@ export default function ReservationCardExample() {
           nombrePlaces={1}
           numeroSiege="8"
           montantTotal={120}
-          statut="en_attente"
+          statut="pending_payment"
           dateReservation={new Date("2025-01-22T15:00:00")}
           onCancel={() => console.log("Annulation réservation res-002")}
         />

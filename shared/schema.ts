@@ -53,7 +53,7 @@ export const vehicles = pgTable("vehicles", {
   modele: text("modele").notNull(),
   capacite: integer("capacite").notNull(),
   statut: text("statut").default("disponible"), // disponible | en_route | en_maintenance
-  chauffeur_id: varchar("chauffeur_id").references(() => users.id),
+  chauffeur_id: varchar("chauffeur_id").references(() => users.id , { onDelete: "cascade" }),
 });
 
 export const trips = pgTable("trips", {
@@ -63,8 +63,8 @@ export const trips = pgTable("trips", {
   heure_depart_prevue: timestamp("heure_depart_prevue").notNull(),
   heure_arrivee_prevue: timestamp("heure_arrivee_prevue").notNull(),
   prix: decimal("prix", { precision: 10, scale: 2 }).notNull(),
-  chauffeur_id: varchar("chauffeur_id").references(() => users.id),
-  vehicle_id: varchar("vehicle_id").references(() => vehicles.id),
+  chauffeur_id: varchar("chauffeur_id").references(() => users.id , { onDelete: "cascade" }),
+  vehicle_id: varchar("vehicle_id").references(() => vehicles.id, { onDelete: "set null" }),
   statut: text("statut").default("planifie"), // planifie | en_cours | termine | annule
   places_disponibles: integer("places_disponibles").notNull(),
   distance_km: integer("distance_km").default(0),
@@ -78,12 +78,12 @@ export const trips = pgTable("trips", {
   status: text("status"), // coming | completed | pending_confirmation
   notes: text("notes"),
   created_at: timestamp("created_at").defaultNow(),
-  updated_at: timestamp("updated_at").defaultNow(),
+  updated_at: timestamp("updated_at").defaultNow()
 });
 
 export const reservations = pgTable("reservations", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  client_id: varchar("client_id").notNull().references(() => users.id),
+  client_id: varchar("client_id").notNull().references(() => users.id , { onDelete: "cascade" }),
   trip_id: varchar("trip_id").notNull().references(() => trips.id),
   nombre_places: integer("nombre_places").notNull(),
   numero_siege: text("numero_siege"),
@@ -92,7 +92,7 @@ export const reservations = pgTable("reservations", {
   montant_total: decimal("montant_total", { precision: 10, scale: 2 }).notNull(),
   checked: boolean("checked").default(false),
   checked_in_at: timestamp("checked_in_at"),
-  checked_by_admin_id: varchar("checked_by_admin_id").references(() => users.id),
+  checked_by_admin_id: varchar("checked_by_admin_id").references(() => users.id , { onDelete: "set null" }),
 });
 
 export const reservationOptions = pgTable("reservation_options", {
@@ -114,7 +114,7 @@ export const reservationGuests = pgTable("reservation_guests", {
 });
 export const searchLogs = pgTable("search_logs", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  user_id: varchar("user_id").references(() => users.id),
+  user_id: varchar("user_id").references(() => users.id , { onDelete: "cascade" }),
   depart: text("depart"),
   arrivee: text("arrivee"),
   date_recherche: timestamp("date_recherche").defaultNow(),
@@ -125,8 +125,8 @@ export const searchLogs = pgTable("search_logs", {
 
 export const incidents = pgTable("incidents", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  chauffeur_id: varchar("chauffeur_id").notNull().references(() => users.id),
-  trip_id: varchar("trip_id").references(() => trips.id),
+  chauffeur_id: varchar("chauffeur_id").notNull().references(() => users.id , { onDelete: "cascade" }),
+  trip_id: varchar("trip_id").references(() => trips.id, { onDelete: "cascade" }),
   type: text("type").notNull(), // trafic | panne | accident | urgence | autre
   description: text("description").notNull(),
   gravite: text("gravite").default("modere"), // mineur | modere | critique
@@ -136,14 +136,14 @@ export const incidents = pgTable("incidents", {
 
 export const profileVersions = pgTable("profile_versions", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  user_id: varchar("user_id").notNull().references(() => users.id),
+  user_id: varchar("user_id").notNull().references(() => users.id , { onDelete: "cascade" }),
   payload: jsonb("payload").notNull(),
   created_at: timestamp("created_at").defaultNow(),
 });
 
 export const searchAlerts = pgTable("search_alerts", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  user_id: varchar("user_id").notNull().references(() => users.id),
+  user_id: varchar("user_id").notNull().references(() => users.id , { onDelete: "cascade" }),
   depart: text("depart"),
   arrivee: text("arrivee"),
   date: timestamp("date"),
@@ -161,14 +161,14 @@ export const missions = pgTable("missions", {
 });
 
 export const notificationPreferences = pgTable("notification_preferences", {
-  user_id: varchar("user_id").primaryKey().references(() => users.id),
+  user_id: varchar("user_id").primaryKey().references(() => users.id , { onDelete: "cascade" }),
   channels: jsonb("channels").default(sql`'{"email":true,"push":true,"sms":false}'::jsonb`),
   priority_threshold: text("priority_threshold").default("normal"),
   quiet_mode: boolean("quiet_mode").default(false),
   quiet_hours: text("quiet_hours"),
   context_filters: jsonb("context_filters").default(sql`'{}'::jsonb`),
   vacation_mode: boolean("vacation_mode").default(false),
-  vacation_delegate_user_id: varchar("vacation_delegate_user_id").references(() => users.id),
+  vacation_delegate_user_id: varchar("vacation_delegate_user_id").references(() => users.id, { onDelete: "set null" }),
   vacation_until: timestamp("vacation_until"),
   updated_at: timestamp("updated_at").defaultNow(),
 });
@@ -196,7 +196,7 @@ export const notificationCampaigns = pgTable("notification_campaigns", {
 
 export const notifications = pgTable("notifications", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  user_id: varchar("user_id").notNull().references(() => users.id),
+  user_id: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   title: text("title").notNull(),
   message: text("message").notNull(),
   type: text("type").default("info"),
@@ -220,7 +220,7 @@ export const notificationRules = pgTable("notification_rules", {
   channels: jsonb("channels").default(sql`'["push"]'::jsonb`),
   priority: text("priority").default("normal"),
   enabled: boolean("enabled").default(true),
-  created_by: varchar("created_by").references(() => users.id),
+  created_by: varchar("created_by").references(() => users.id, { onDelete: "set null" }),
   created_at: timestamp("created_at").defaultNow(),
 });
 
@@ -245,14 +245,14 @@ export const notificationEngagements = pgTable("notification_engagements", {
 export const notificationCollaborators = pgTable("notification_collaborators", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   notification_id: varchar("notification_id").notNull().references(() => notifications.id, { onDelete: "cascade" }),
-  collaborator_user_id: varchar("collaborator_user_id").notNull().references(() => users.id),
+  collaborator_user_id: varchar("collaborator_user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   role: text("role").default("viewer"),
   created_at: timestamp("created_at").defaultNow(),
 });
 
 export const notificationDigests = pgTable("notification_digests", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  user_id: varchar("user_id").notNull().references(() => users.id),
+  user_id: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   scheduled_for: timestamp("scheduled_for").notNull(),
   payload: jsonb("payload").default(sql`'[]'::jsonb`),
   sent: boolean("sent").default(false),
@@ -261,8 +261,8 @@ export const notificationDigests = pgTable("notification_digests", {
 
 export const notificationDelegations = pgTable("notification_delegations", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  user_id: varchar("user_id").notNull().references(() => users.id),
-  delegate_user_id: varchar("delegate_user_id").notNull().references(() => users.id),
+  user_id: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  delegate_user_id: varchar("delegate_user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   start_at: timestamp("start_at").defaultNow(),
   end_at: timestamp("end_at"),
   active: boolean("active").default(true),
@@ -271,13 +271,13 @@ export const notificationDelegations = pgTable("notification_delegations", {
 
 export const supportTickets = pgTable("support_tickets", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  user_id: varchar("user_id").notNull().references(() => users.id),
+  user_id: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   subject: text("subject").notNull(),
   statut: text("statut").default("open"), // open | pending | resolved | escalated
   priority: text("priority").default("normal"), // low | normal | high
   channel: text("channel").default("in_app"), // in_app | email | phone | social
   metadata: jsonb("metadata"),
-  assigned_agent_id: varchar("assigned_agent_id").references(() => users.id),
+  assigned_agent_id: varchar("assigned_agent_id").references(() => users.id, { onDelete: "set null" }),
   satisfaction_score: integer("satisfaction_score"),
   resolution_summary: text("resolution_summary"),
   resolved_at: timestamp("resolved_at"),
@@ -288,7 +288,7 @@ export const supportTickets = pgTable("support_tickets", {
 export const ticketMessages = pgTable("ticket_messages", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   ticket_id: varchar("ticket_id").notNull().references(() => supportTickets.id, { onDelete: "cascade" }),
-  sender_id: varchar("sender_id").references(() => users.id),
+  sender_id: varchar("sender_id").references(() => users.id, { onDelete: "set null" }),
   role: text("role").default("user"), // user | agent | assistant
   message: text("message").notNull(),
   attachments: jsonb("attachments"),
@@ -317,8 +317,8 @@ export const knowledgeEmbeddings = pgTable("knowledge_embeddings", {
 
 export const cobrowsingSessions = pgTable("cobrowsing_sessions", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  owner_user_id: varchar("owner_user_id").notNull().references(() => users.id),
-  support_agent_id: varchar("support_agent_id").references(() => users.id),
+  owner_user_id: varchar("owner_user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  support_agent_id: varchar("support_agent_id").references(() => users.id, { onDelete: "set null" }),
   ticket_id: varchar("ticket_id").references(() => supportTickets.id),
   status: text("status").default("pending"), // pending | active | ended
   token: varchar("token").notNull(),
@@ -329,7 +329,7 @@ export const cobrowsingSessions = pgTable("cobrowsing_sessions", {
 export const cobrowsingSignals = pgTable("cobrowsing_signals", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   session_id: varchar("session_id").notNull().references(() => cobrowsingSessions.id, { onDelete: "cascade" }),
-  sender_id: varchar("sender_id").references(() => users.id),
+  sender_id: varchar("sender_id").references(() => users.id, { onDelete: "cascade" }),
   type: text("type").notNull(), // offer | answer | ice | control
   payload: jsonb("payload").notNull(),
   created_at: timestamp("created_at").defaultNow(),
@@ -337,7 +337,7 @@ export const cobrowsingSignals = pgTable("cobrowsing_signals", {
 
 export const feedbackEntries = pgTable("feedback_entries", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  user_id: varchar("user_id").references(() => users.id),
+  user_id: varchar("user_id").references(() => users.id, { onDelete: "cascade" }),
   category: text("category").default("general"),
   rating: integer("rating"),
   comment: text("comment"),
@@ -358,21 +358,21 @@ export const surveys = pgTable("surveys", {
 export const surveyResponses = pgTable("survey_responses", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   survey_id: varchar("survey_id").notNull().references(() => surveys.id, { onDelete: "cascade" }),
-  user_id: varchar("user_id").references(() => users.id),
+  user_id: varchar("user_id").references(() => users.id, { onDelete: "cascade" }),
   answers: jsonb("answers").default(sql`'{}'::jsonb`),
   sentiment_score: decimal("sentiment_score", { precision: 4, scale: 2 }).default("0"),
   submitted_at: timestamp("submitted_at").defaultNow(),
 });
 
 export const loyaltyPoints = pgTable("loyalty_points", {
-  user_id: varchar("user_id").primaryKey().references(() => users.id),
+  user_id: varchar("user_id").primaryKey().references(() => users.id, { onDelete: "cascade" }),
   balance: integer("balance").default(0),
   updated_at: timestamp("updated_at").defaultNow(),
 });
 
 export const loyaltyTransactions = pgTable("loyalty_transactions", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  user_id: varchar("user_id").notNull().references(() => users.id),
+  user_id: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   type: text("type").notNull(), // credit | debit
   amount: integer("amount").notNull(),
   source: text("source").default("reservation"), // reservation | mission | transfer
@@ -411,7 +411,7 @@ export const userBadges = pgTable("user_badges", {
 export const tripReviews = pgTable("trip_reviews", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   trip_id: varchar("trip_id").notNull().references(() => trips.id),
-  client_id: varchar("client_id").notNull().references(() => users.id),
+  client_id: varchar("client_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   rating: integer("rating").notNull(),
   comment: text("comment"),
   sentiment_score: decimal("sentiment_score", { precision: 4, scale: 2 }).default("0"),
@@ -429,7 +429,7 @@ export const reviewMedia = pgTable("review_media", {
 
 export const userActivity = pgTable("user_activity", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  user_id: varchar("user_id").notNull().references(() => users.id),
+  user_id: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   event: text("event").notNull(), // login, logout, reservation, update_profile ...
   metadata: jsonb("metadata"),
   ip: text("ip"),
@@ -445,7 +445,7 @@ export const securityThresholds = pgTable("security_thresholds", {
 
 export const userApprovals = pgTable("user_approvals", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  user_id: varchar("user_id").notNull().references(() => users.id),
+  user_id: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   action: text("action").notNull(), // create | update | role_change
   payload: jsonb("payload"),
   status: text("status").default("pending"), // pending | approved | rejected
@@ -466,7 +466,7 @@ export const roleContexts = pgTable("role_contexts", {
 
 export const experiencePersonalizations = pgTable("experience_personalizations", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  user_id: varchar("user_id").notNull().references(() => users.id),
+  user_id: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   profile_name: text("profile_name").notNull(),
   context: text("context").default("bureau"),
   mode: text("mode").default("standard"),
@@ -491,7 +491,7 @@ export const experiencePersonalizations = pgTable("experience_personalizations",
 });
 
 export const accessibilitySettings = pgTable("accessibility_settings", {
-  user_id: varchar("user_id").primaryKey().references(() => users.id),
+  user_id: varchar("user_id").primaryKey().references(() => users.id, { onDelete: "cascade" }),
   voice_enabled: boolean("voice_enabled").default(false),
   gestures_enabled: boolean("gestures_enabled").default(false),
   voice_feedback: boolean("voice_feedback").default(true),
@@ -519,10 +519,10 @@ export const optimizationRecommendations = pgTable("optimization_recommendations
   priority: integer("priority").default(0),
   confidence: decimal("confidence", { precision: 4, scale: 2 }).default("0.5"),
   recommended_bus_id: varchar("recommended_bus_id").references(() => vehicles.id),
-  recommended_chauffeur_id: varchar("recommended_chauffeur_id").references(() => users.id),
+  recommended_chauffeur_id: varchar("recommended_chauffeur_id").references(() => users.id, { onDelete: "set null" }),
   status: text("status").default("pending"),
   metadata: jsonb("metadata").default(sql`'{}'::jsonb`),
-  created_by: varchar("created_by").references(() => users.id),
+  created_by: varchar("created_by").references(() => users.id, { onDelete: "set null" }),
   created_at: timestamp("created_at").defaultNow(),
   updated_at: timestamp("updated_at").defaultNow(),
 });

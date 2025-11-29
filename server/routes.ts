@@ -59,7 +59,8 @@ declare module "express-session" {
 
 // Middleware to check authentication
 function requireAuth(req: Request, res: Response, next: NextFunction) {
-  console.log("[auth] userId:", req.session.userId, "cookies:", req.cookies ? Object.keys(req.cookies) : "none");
+  const cookieHeader = req.headers.cookie || "none";
+  console.log("[auth] userId:", req.session.userId, "cookie header:", cookieHeader);
   if (!req.session.userId) {
     return res.status(401).json({ error: "Non authentifié" });
   }
@@ -1342,6 +1343,23 @@ async function dispatchNotificationToUser(
   const user = await storage.getUser(userId);
   if (!user) {
     return { skipped: true, reason: "user_not_found" };
+  }
+
+  // Respect simple profil-level notification toggles
+  if (!options.bypassPreferences) {
+    const category = payload.category ?? "";
+    // Notifications par email d\u00e9sactiv\u00e9es
+    if (payload.channel === "email" && user.notifications_email === false) {
+      return { skipped: true, reason: "email_pref_disabled" };
+    }
+    // Notifications li\u00e9es aux r\u00e9servations
+    if (category === "reservation" && user.notifications_reservations === false) {
+      return { skipped: true, reason: "reservation_pref_disabled" };
+    }
+    // Alertes / urgences critiques
+    if (category === "alert" && user.notifications_alertes === false) {
+      return { skipped: true, reason: "alert_pref_disabled" };
+    }
   }
 
   if (!options.bypassPreferences) {
@@ -3065,7 +3083,22 @@ export function registerRoutes(app: Express) {
   // ==================== TRIP ROUTES ====================
 
   const tripCategorySchema = z.enum(["scolaire", "medical", "prive", "livraison", "autre"]);
-  const tripStatusSchema = z.enum(["coming", "completed", "pending_confirmation"]);
+  /**
+   * Admin-facing statut "métier" du trajet.
+   * Ces valeurs décrivent le workflow d'affectation chauffeur, distinct du champ `statut`
+   * utilisé pour l'état opérationnel (planifie | en_cours | termine | annule).
+   *
+   * waiting_chauffeur_confirmation  -> client payé, mission en attente de validation chauffeur
+   * confirmed                       -> chauffeur a accepté la mission
+   * to_reassign                     -> chauffeur a refusé, le dispatch doit réassigner
+   * completed                       -> mission terminée
+   */
+  const tripStatusSchema = z.enum([
+    "waiting_chauffeur_confirmation",
+    "confirmed",
+    "to_reassign",
+    "completed",
+  ]);
 
   const adminTripPayloadBaseSchema = z.object({
     chauffeur_id: z.string().uuid(),
@@ -3087,9 +3120,18 @@ export function registerRoutes(app: Express) {
   const adminTripUpdateSchema = adminTripPayloadBaseSchema.partial();
 
   const mapAdminStatusToTripStatut = (status: z.infer<typeof tripStatusSchema>): string => {
-    if (status === "completed") return "termine";
-    // coming & pending_confirmation are des variantes de trajets planifies
-    return "planifie";
+    switch (status) {
+      case "completed":
+        return "termine";
+      case "confirmed":
+        // Mission confirmée par le chauffeur : on la considère comme en cours
+        return "en_cours";
+      case "waiting_chauffeur_confirmation":
+      case "to_reassign":
+      default:
+        // Missions à confirmer ou à réassigner restent dans les trajets planifiés
+        return "planifie";
+    }
   };
 
   const buildInsertTripFromAdminPayload = (payload: z.infer<typeof adminTripCreateSchema>): InsertTrip => {
@@ -3352,7 +3394,11 @@ export function registerRoutes(app: Express) {
   app.get("/api/chauffeur/trips", requireRole("CHAUFFEUR", "ADMIN"), async (req, res) => {
     try {
       const user = await storage.getUser(req.session.userId!);
-      const trips = await storage.getTripsByChauffeur(user!.id);
+      if (!user) {
+        return res.status(401).json({ error: "Session invalide" });
+      }
+      // Montrer les trajets assignés + les trajets disponibles (chauffeur non encore affecté)
+      const trips = await storage.searchAdminTrips({ chauffeurId: user.id, includeUnassigned: true });
       res.json(trips);
     } catch (error) {
       res.status(500).json({ error: "Erreur serveur" });
@@ -3363,7 +3409,7 @@ export function registerRoutes(app: Express) {
   app.get("/api/chauffeur/calendar", requireRole("CHAUFFEUR", "ADMIN"), async (req, res) => {
     try {
       const chauffeurId = req.user!.id;
-      const trips = await storage.getTripsByChauffeur(chauffeurId);
+      const trips = await storage.searchAdminTrips({ chauffeurId, includeUnassigned: true });
       const now = new Date();
 
       const byDate: Record<string, Trip[]> = {};
@@ -3414,7 +3460,29 @@ export function registerRoutes(app: Express) {
   // Update trip
   app.patch("/api/trips/:id", requireRole("ADMIN", "CHAUFFEUR"), async (req, res) => {
     try {
-      const trip = await storage.updateTrip(req.params.id, req.body);
+      const patch = { ...(req.body as Partial<InsertTrip>) };
+
+      // Normaliser le workflow chauffeur côté serveur
+      const rawStatus = (patch as any).status as string | undefined;
+      if (rawStatus === "to_reassign") {
+        (patch as any).status = "to_reassign";
+        (patch as any).chauffeur_id = null;
+        if (!patch.statut) {
+          patch.statut = "planifie" as any;
+        }
+      } else if (rawStatus === "confirmed") {
+        (patch as any).status = "confirmed";
+        if (!patch.statut) {
+          patch.statut = "en_cours" as any;
+        }
+      } else if (rawStatus === "waiting_chauffeur_confirmation") {
+        (patch as any).status = "waiting_chauffeur_confirmation";
+        if (!patch.statut) {
+          patch.statut = "planifie" as any;
+        }
+      }
+
+      const trip = await storage.updateTrip(req.params.id, patch);
       if (!trip) {
         return res.status(404).json({ error: "Trajet non trouvé" });
       }
@@ -3503,7 +3571,10 @@ export function registerRoutes(app: Express) {
       const user = await storage.getUser(req.session.userId!);
       const data = insertReservationSchema.parse({
         ...req.body,
-        client_id: user!.id
+        client_id: user!.id,
+        // Toute nouvelle réservation démarre en attente de paiement.
+        // Le passage à "paid" déclenchera ensuite l'affectation chauffeur.
+        statut: "pending_payment",
       });
 
       // Check if trip has enough places
@@ -3544,6 +3615,23 @@ export function registerRoutes(app: Express) {
         });
       }
 
+      // Notification r\u00e9elle li\u00e9e \u00e0 la r\u00e9servation (respecte les pr\u00e9f\u00e9rences utilisateur)
+      await dispatchNotificationToUser(
+        user!.id,
+        {
+          title: "R\u00e9servation cr\u00e9\u00e9e",
+          message: `Votre r\u00e9servation pour le trajet ${trip.point_depart} \u2192 ${trip.point_arrivee} a bien \u00e9t\u00e9 enregistr\u00e9e.`,
+          category: "reservation",
+          type: "reservation_created",
+          context: {
+            reservationId: reservation.id,
+            tripId: reservation.trip_id,
+            montant_total: data.montant_total,
+          },
+        },
+        { priority: "normal", sourceUserId: user!.id },
+      );
+
       res.status(201).json(reservationWithQr);
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -3554,6 +3642,73 @@ export function registerRoutes(app: Express) {
   });
 
   // Cancel reservation
+  // Marquer une réservation comme payée (paiement CB / QR / justificatif)
+  app.post("/api/reservations/:id/pay", requireAuth, async (req, res) => {
+    try {
+      const reservation = await storage.getReservation(req.params.id);
+      if (!reservation) {
+        return res.status(404).json({ error: "RǸservation non trouvǸe" });
+      }
+
+      const user = await storage.getUser(req.session.userId!);
+      if (!user) {
+        return res.status(401).json({ error: "Non authentifiǸ" });
+      }
+
+      const isAdmin = isAdminRole(user.role);
+      if (!isAdmin && reservation.client_id !== user.id) {
+        return res.status(403).json({ error: "Acc��s interdit" });
+      }
+
+      if (reservation.statut === "paid") {
+        return res.status(400).json({ error: "RǸservation dǸj�� payǸe" });
+      }
+
+      const updatedReservation = await storage.updateReservation(reservation.id, {
+        ...(req.body && typeof req.body === "object" ? req.body : {}),
+        statut: "paid",
+      });
+
+      // Dès que la réservation est payée, on place le trajet associé en attente
+      // de confirmation chauffeur (workflow métier).
+      const trip = await storage.getTrip(reservation.trip_id);
+      if (trip) {
+        const tripPatch: Partial<InsertTrip> = {};
+        if (!trip.status || trip.status === "waiting_chauffeur_confirmation") {
+          (tripPatch as any).status = "waiting_chauffeur_confirmation";
+        }
+        if (!trip.statut || trip.statut === "planifie") {
+          tripPatch.statut = "planifie" as any;
+        }
+        if (Object.keys(tripPatch).length > 0) {
+          await storage.updateTrip(trip.id, tripPatch);
+        }
+      }
+
+      // Notification confirmant le paiement de la r\xE9servation
+      await dispatchNotificationToUser(
+        reservation.client_id,
+        {
+          title: "R\xE9servation pay\xE9e",
+          message: trip
+            ? `Votre r\xE9servation pour le trajet ${trip.point_depart} \u2192 ${trip.point_arrivee} est maintenant marqu\xE9e comme pay\xE9e.`
+            : "Votre r\xE9servation est maintenant marqu\xE9e comme pay\xE9e.",
+          category: "reservation",
+          type: "reservation_paid",
+          context: {
+            reservationId: reservation.id,
+            tripId: reservation.trip_id,
+          },
+        },
+        { priority: "normal", sourceUserId: user.id },
+      );
+
+      res.json(updatedReservation);
+    } catch (error) {
+      res.status(500).json({ error: "Erreur serveur" });
+    }
+  });
+
   app.post("/api/reservations/:id/cancel", requireAuth, async (req, res) => {
     try {
       const reservation = await storage.getReservation(req.params.id);
@@ -3740,24 +3895,192 @@ export function registerRoutes(app: Express) {
   });
 
   // ==================== STATS ROUTES (Admin only) ====================
-  
-  app.get("/api/stats", requireRole("ADMIN"), async (req, res) => {
+
+  app.get("/api/stats", requireRole("ADMIN"), async (_req, res) => {
     try {
-      const [users, vehicles, trips] = await Promise.all([
+      const [ctx, users] = await Promise.all([
+        assembleOptimizationContext(7),
         storage.getAllUsers(),
-        storage.getAllVehicles(),
-        storage.getAllTrips()
       ]);
 
-      const activeTrips = trips.filter(t => t.statut === "en_cours" || t.statut === "planifie");
-      
+      const snapshot = ctx.snapshot;
+
+      const totalTrips = snapshot.totals.trips;
+      const activeTrips = snapshot.activeTrips;
+
+      const completedTrips = ctx.loadFactors.filter(
+        (trip) => trip.statut === "termine",
+      ).length;
+
+      const trends = ctx.trends ?? [];
+
+      const lateIncidents = ctx.incidents.filter((incident) => {
+        const type = (incident.type || "").toLowerCase();
+        return ["trafic", "retard", "accident", "urgence"].some((keyword) =>
+          type.includes(keyword),
+        );
+      });
+
+      const criticalIncidents = ctx.incidents.filter(
+        (incident) => incident.gravite === "critique",
+      );
+
+      const punctualityValue =
+        completedTrips > 0
+          ? Math.max(0, 100 - (lateIncidents.length / completedTrips) * 100)
+          : 100;
+
+      const occupancyRates = ctx.loadFactors.map((factor) => {
+        if (!factor.capacity || factor.capacity <= 0) {
+          return 0;
+        }
+        return Math.min(1, factor.reserved / factor.capacity);
+      });
+      const averageOccupancy =
+        occupancyRates.length > 0
+          ? occupancyRates.reduce((sum, value) => sum + value, 0) / occupancyRates.length
+          : 0;
+
+      const fillRateValue = Number((averageOccupancy * 100).toFixed(1));
+      const fillRateTarget = 80;
+      const punctualityTarget = 95;
+      const criticalAlertsBaseline = 3;
+
+      const activity = trends
+        .slice(-7)
+        .map((entry) => ({
+          day: entry.day,
+          reservations: Number(entry.reservations ?? 0),
+        }));
+
+      const revenueSeries = trends.map((entry) => ({
+        day: entry.day,
+        revenue: Number(entry.revenue ?? 0),
+      }));
+
+      const occupancySource = ctx.loadFactors.filter((factor) => factor.capacity > 0);
+      const occupancyBucketsConfig = [
+        { id: "low", label: "0-50%", from: 0, to: 0.5 },
+        { id: "medium", label: "50-80%", from: 0.5, to: 0.8 },
+        { id: "high", label: "80-100%", from: 0.8, to: 1.01 },
+      ] as const;
+
+      const occupancyBuckets = occupancyBucketsConfig.map((bucket) => {
+        const count = occupancySource.filter((factor) => {
+          const ratio = factor.capacity ? factor.reserved / factor.capacity : 0;
+          return ratio >= bucket.from && ratio < bucket.to;
+        }).length;
+        return {
+          id: bucket.id,
+          label: bucket.label,
+          count,
+        };
+      });
+
+      const vehicleStatusCountsMap = new Map<string, number>();
+      for (const vehicle of ctx.vehicles) {
+        const key = vehicle.statut || "inconnu";
+        vehicleStatusCountsMap.set(key, (vehicleStatusCountsMap.get(key) ?? 0) + 1);
+      }
+      const vehicleStatusCounts = Array.from(vehicleStatusCountsMap.entries()).map(
+        ([status, count]) => ({
+          status,
+          count,
+        }),
+      );
+
+      const incidentTypeCountsMap = new Map<string, number>();
+      for (const incident of ctx.incidents) {
+        const key = incident.type || "autre";
+        incidentTypeCountsMap.set(key, (incidentTypeCountsMap.get(key) ?? 0) + 1);
+      }
+      const incidentTypeCounts = Array.from(incidentTypeCountsMap.entries()).map(
+        ([type, count]) => ({
+          type,
+          count,
+        }),
+      );
+
+      let trendDelta = 0;
+      if (trends.length >= 2) {
+        const last = Number(trends[trends.length - 1].reservations ?? 0);
+        const baseline =
+          trends.slice(0, -1).reduce((sum, t) => sum + Number(t.reservations ?? 0), 0) /
+          Math.max(trends.length - 1, 1);
+        trendDelta = baseline > 0 ? ((last - baseline) / baseline) * 100 : 0;
+      }
+
+      const systemAlerts: Array<{
+        id: string;
+        message: string;
+        severity: "info" | "warning" | "critical";
+      }> = [];
+
+      if (criticalIncidents.length === 0) {
+        systemAlerts.push({
+          id: "no-critical-incidents",
+          message: "Aucun incident critique enregistr\u00e9 aujourd'hui.",
+          severity: "info",
+        });
+      } else {
+        systemAlerts.push({
+          id: "critical-incidents",
+          message: `${criticalIncidents.length} incident(s) critiques en cours.`,
+          severity: "critical",
+        });
+      }
+
+      if (snapshot.reservationsToday === 0) {
+        systemAlerts.push({
+          id: "no-reservations-today",
+          message: "Aucune r\u00e9servation enregistr\u00e9e aujourd'hui.",
+          severity: "warning",
+        });
+      }
+
+      if (fillRateValue < fillRateTarget - 10) {
+        systemAlerts.push({
+          id: "low-occupancy",
+          message: "Taux de remplissage en dessous de la cible r\u00e9seau.",
+          severity: "warning",
+        });
+      }
+
       res.json({
+        // Backward-compatible summary fields
         totalUsers: users.length,
-        totalVehicles: vehicles.length,
-        activeTrips: activeTrips.length,
-        totalTrips: trips.length
+        totalVehicles: ctx.vehicles.length,
+        activeTrips,
+        totalTrips,
+        // Detailed snapshot and computed metrics
+        snapshot,
+        kpis: {
+          fillRate: {
+            value: Number(fillRateValue.toFixed(1)),
+            trend: Number((fillRateValue - fillRateTarget).toFixed(1)),
+          },
+          punctuality: {
+            value: Number(punctualityValue.toFixed(1)),
+            trend: Number((punctualityValue - punctualityTarget).toFixed(1)),
+          },
+          criticalAlerts: {
+            value: criticalIncidents.length,
+            trend: criticalIncidents.length - criticalAlertsBaseline,
+          },
+        },
+        activity,
+        revenueSeries,
+        occupancyBuckets,
+        vehicleStatusCounts,
+        incidentTypeCounts,
+        trend: {
+          deltaPercent: Number(trendDelta.toFixed(1)),
+          direction: trendDelta > 5 ? "up" : trendDelta < -5 ? "down" : "flat",
+        },
+        systemAlerts,
       });
     } catch (error) {
+      console.error("Admin stats error:", error);
       res.status(500).json({ error: "Erreur serveur" });
     }
   });

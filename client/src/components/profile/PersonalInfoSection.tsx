@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useProfile, useUpdateProfile } from "@/hooks/useProfile";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -10,7 +10,7 @@ import { Loader2, Upload } from "lucide-react";
 export default function PersonalInfoSection() {
   const { data: profile, isLoading } = useProfile();
   const updateProfile = useUpdateProfile();
-  const [isEditing, setIsEditing] = useState(false);
+  const [isEditing, setIsEditing] = useState(true);
   const [formData, setFormData] = useState({
     nom: profile?.nom ?? "",
     prenom: profile?.prenom ?? "",
@@ -19,6 +19,20 @@ export default function PersonalInfoSection() {
     adresse: profile?.adresse ?? "",
     photo_profil: profile?.photo_profil ?? "",
   });
+
+  // Sync form values when le profil est charg�� / mis �� jour
+  useEffect(() => {
+    if (profile) {
+      setFormData({
+        nom: profile.nom ?? "",
+        prenom: profile.prenom ?? "",
+        email: profile.email ?? "",
+        telephone: profile.telephone ?? "",
+        adresse: profile.adresse ?? "",
+        photo_profil: profile.photo_profil ?? "",
+      });
+    }
+  }, [profile]);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
@@ -155,7 +169,7 @@ export default function PersonalInfoSection() {
 
           <div className="flex gap-2 pt-4">
             {!isEditing ? (
-              <Button onClick={() => setIsEditing(true)} variant="default">
+              <Button type="button" onClick={() => setIsEditing(true)} variant="default">
                 Modifier
               </Button>
             ) : (

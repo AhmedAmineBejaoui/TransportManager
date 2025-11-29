@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   Dialog,
   DialogContent,
@@ -18,14 +18,17 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
-import { useAdminCreateTrip } from "@/hooks/useTrips";
+import { useAdminCreateTrip, useAdminUpdateTrip } from "@/hooks/useTrips";
 import { useUsers } from "@/hooks/useUsers";
 import { useVehicles } from "@/hooks/useVehicles";
 import { Loader2 } from "lucide-react";
+import type { Trip } from "@shared/schema";
 
 interface CreateTripDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  mode?: "create" | "edit" | "view";
+  trip?: Trip | null;
 }
 
 const CATEGORIES = [
@@ -36,37 +39,119 @@ const CATEGORIES = [
   { value: "autre", label: "Autre" },
 ] as const;
 
+// Workflow d'affectation chauffeur (aligné avec tripStatusSchema côté serveur)
 const STATUSES = [
-  { value: "coming", label: "À venir" },
-  { value: "pending_confirmation", label: "En attente de confirmation" },
+  { value: "waiting_chauffeur_confirmation", label: "En attente chauffeur" },
+  { value: "confirmed", label: "Confirmé" },
   { value: "completed", label: "Terminé" },
 ] as const;
 
-export function CreateTripDialog({ open, onOpenChange }: CreateTripDialogProps) {
+type FormState = {
+  date: string;
+  startTime: string;
+  endTime: string;
+  startLocation: string;
+  endLocation: string;
+  category: (typeof CATEGORIES)[number]["value"];
+  status: (typeof STATUSES)[number]["value"];
+  prix: string;
+  places: string;
+  vehicleId: string;
+  chauffeurId: string;
+  notes: string;
+};
+
+const EMPTY_FORM: FormState = {
+  date: "",
+  startTime: "",
+  endTime: "",
+  startLocation: "",
+  endLocation: "",
+  category: "scolaire",
+  status: "waiting_chauffeur_confirmation",
+  prix: "",
+  places: "",
+  vehicleId: "",
+  chauffeurId: "",
+  notes: "",
+};
+
+export function CreateTripDialog({
+  open,
+  onOpenChange,
+  mode = "create",
+  trip,
+}: CreateTripDialogProps) {
   const { toast } = useToast();
   const createTrip = useAdminCreateTrip();
+  const updateTrip = useAdminUpdateTrip();
   const { data: users = [] } = useUsers();
   const { data: vehicles = [] } = useVehicles();
 
   const chauffeurs = users.filter((u) => u.role === "CHAUFFEUR");
 
-  const [formData, setFormData] = useState({
-    date: "",
-    startTime: "",
-    endTime: "",
-    startLocation: "",
-    endLocation: "",
-    category: "scolaire",
-    status: "coming",
-    prix: "",
-    places: "",
-    vehicleId: "",
-    chauffeurId: "",
-    notes: "",
-  });
+  const [formData, setFormData] = useState<FormState>(EMPTY_FORM);
+
+  const isCreate = mode === "create";
+  const isEdit = mode === "edit";
+  const isView = mode === "view";
+  const isReadOnly = isView;
+
+  // Remplit le formulaire lorsque l'on ouvre en mode édition / vue
+  useEffect(() => {
+    if (!open) return;
+
+    if (trip && (mode === "edit" || mode === "view")) {
+      const departDate = trip.heure_depart_prevue
+        ? new Date(trip.heure_depart_prevue as any)
+        : null;
+      const arriveeDate = trip.heure_arrivee_prevue
+        ? new Date(trip.heure_arrivee_prevue as any)
+        : null;
+
+      const date =
+        (trip as any).trip_date ||
+        (departDate ? departDate.toISOString().slice(0, 10) : "");
+
+      const startTime =
+        (trip as any).start_time ||
+        (departDate ? departDate.toISOString().slice(11, 16) : "");
+
+      const endTime =
+        (trip as any).end_time ||
+        (arriveeDate ? arriveeDate.toISOString().slice(11, 16) : "");
+
+      setFormData({
+        date,
+        startTime,
+        endTime,
+        startLocation:
+          (trip as any).start_location || trip.point_depart || "",
+        endLocation: (trip as any).end_location || trip.point_arrivee || "",
+        category: ((trip as any).category || "scolaire") as FormState["category"],
+        status: ((trip as any).status ||
+          "waiting_chauffeur_confirmation") as FormState["status"],
+        prix: trip.prix ? String(trip.prix) : "",
+        places:
+          trip.places_disponibles != null
+            ? String(trip.places_disponibles)
+            : "",
+        vehicleId: trip.vehicle_id || "",
+        chauffeurId: trip.chauffeur_id || "",
+        notes: (trip as any).notes || "",
+      });
+    } else if (mode === "create") {
+      setFormData(EMPTY_FORM);
+    }
+  }, [open, trip, mode]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (isView) {
+      onOpenChange(false);
+      return;
+    }
 
     if (
       !formData.startLocation ||
@@ -88,58 +173,80 @@ export function CreateTripDialog({ open, onOpenChange }: CreateTripDialogProps) 
 
     const payload = {
       chauffeur_id: formData.chauffeurId,
-      vehicle_id: formData.vehicleId || undefined,
+      vehicle_id:
+        formData.vehicleId && formData.vehicleId !== "none"
+          ? formData.vehicleId
+          : undefined,
       date: formData.date,
       start_time: formData.startTime,
       end_time: formData.endTime,
       start_location: formData.startLocation,
       end_location: formData.endLocation,
-      category: formData.category as (typeof CATEGORIES)[number]["value"],
-      status: formData.status as (typeof STATUSES)[number]["value"],
+      category: formData.category,
+      status: formData.status,
       notes: formData.notes || undefined,
       prix: formData.prix,
       places_disponibles: parseInt(formData.places, 10),
     };
 
-    createTrip.mutate(payload, {
-      onSuccess: () => {
-        toast({
-          title: "Trajet créé",
-          description: "Le trajet a été créé avec succès.",
-        });
-        setFormData({
-          date: "",
-          startTime: "",
-          endTime: "",
-          startLocation: "",
-          endLocation: "",
-          category: "scolaire",
-          status: "coming",
-          prix: "",
-          places: "",
-          vehicleId: "",
-          chauffeurId: "",
-          notes: "",
-        });
-        onOpenChange(false);
-      },
-      onError: (error: any) => {
-        toast({
-          title: "Erreur",
-          description: error?.message || "Impossible de créer le trajet.",
-          variant: "destructive",
-        });
-      },
-    });
+    if (isCreate) {
+      createTrip.mutate(payload, {
+        onSuccess: () => {
+          toast({
+            title: "Trajet créé",
+            description: "Le trajet a été créé avec succès.",
+          });
+          setFormData(EMPTY_FORM);
+          onOpenChange(false);
+        },
+        onError: (error: any) => {
+          toast({
+            title: "Erreur",
+            description: error?.message || "Impossible de créer le trajet.",
+            variant: "destructive",
+          });
+        },
+      });
+    } else if (isEdit && trip) {
+      updateTrip.mutate(
+        { id: trip.id, data: payload },
+        {
+          onSuccess: () => {
+            toast({
+              title: "Trajet mis à jour",
+              description: "Le trajet a été mis à jour avec succès.",
+            });
+            onOpenChange(false);
+          },
+          onError: (error: any) => {
+            toast({
+              title: "Erreur",
+              description:
+                error?.message || "Impossible de mettre à jour le trajet.",
+              variant: "destructive",
+            });
+          },
+        },
+      );
+    }
   };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[560px]">
         <DialogHeader>
-          <DialogTitle>Créer un nouveau trajet</DialogTitle>
+          <DialogTitle>
+            {isCreate && "Créer un nouveau trajet"}
+            {isEdit && "Modifier le trajet"}
+            {isView && "Détails du trajet"}
+          </DialogTitle>
           <DialogDescription>
-            L&apos;administrateur configure ici un trajet réel pour un chauffeur.
+            {isCreate &&
+              "L'administrateur configure ici un trajet réel pour un chauffeur."}
+            {isEdit &&
+              "Mettez à jour les informations de ce trajet chauffeur."}
+            {isView &&
+              "Consultez les informations détaillées de ce trajet chauffeur."}
           </DialogDescription>
         </DialogHeader>
 
@@ -152,9 +259,13 @@ export function CreateTripDialog({ open, onOpenChange }: CreateTripDialogProps) 
                 placeholder="Ex: Tunis"
                 value={formData.startLocation}
                 onChange={(e) =>
-                  setFormData((prev) => ({ ...prev, startLocation: e.target.value }))
+                  setFormData((prev) => ({
+                    ...prev,
+                    startLocation: e.target.value,
+                  }))
                 }
                 required
+                disabled={isReadOnly}
               />
             </div>
             <div className="space-y-2">
@@ -164,9 +275,13 @@ export function CreateTripDialog({ open, onOpenChange }: CreateTripDialogProps) 
                 placeholder="Ex: Sousse"
                 value={formData.endLocation}
                 onChange={(e) =>
-                  setFormData((prev) => ({ ...prev, endLocation: e.target.value }))
+                  setFormData((prev) => ({
+                    ...prev,
+                    endLocation: e.target.value,
+                  }))
                 }
                 required
+                disabled={isReadOnly}
               />
             </div>
           </div>
@@ -182,6 +297,7 @@ export function CreateTripDialog({ open, onOpenChange }: CreateTripDialogProps) 
                   setFormData((prev) => ({ ...prev, date: e.target.value }))
                 }
                 required
+                disabled={isReadOnly}
               />
             </div>
             <div className="space-y-2">
@@ -191,9 +307,13 @@ export function CreateTripDialog({ open, onOpenChange }: CreateTripDialogProps) 
                 type="time"
                 value={formData.startTime}
                 onChange={(e) =>
-                  setFormData((prev) => ({ ...prev, startTime: e.target.value }))
+                  setFormData((prev) => ({
+                    ...prev,
+                    startTime: e.target.value,
+                  }))
                 }
                 required
+                disabled={isReadOnly}
               />
             </div>
             <div className="space-y-2">
@@ -203,9 +323,13 @@ export function CreateTripDialog({ open, onOpenChange }: CreateTripDialogProps) 
                 type="time"
                 value={formData.endTime}
                 onChange={(e) =>
-                  setFormData((prev) => ({ ...prev, endTime: e.target.value }))
+                  setFormData((prev) => ({
+                    ...prev,
+                    endTime: e.target.value,
+                  }))
                 }
                 required
+                disabled={isReadOnly}
               />
             </div>
           </div>
@@ -224,6 +348,7 @@ export function CreateTripDialog({ open, onOpenChange }: CreateTripDialogProps) 
                   setFormData((prev) => ({ ...prev, prix: e.target.value }))
                 }
                 required
+                disabled={isReadOnly}
               />
             </div>
             <div className="space-y-2">
@@ -238,6 +363,7 @@ export function CreateTripDialog({ open, onOpenChange }: CreateTripDialogProps) 
                   setFormData((prev) => ({ ...prev, places: e.target.value }))
                 }
                 required
+                disabled={isReadOnly}
               />
             </div>
           </div>
@@ -248,8 +374,12 @@ export function CreateTripDialog({ open, onOpenChange }: CreateTripDialogProps) 
               <Select
                 value={formData.category}
                 onValueChange={(value) =>
-                  setFormData((prev) => ({ ...prev, category: value }))
+                  setFormData((prev) => ({
+                    ...prev,
+                    category: value as typeof prev.category,
+                  }))
                 }
+                disabled={isReadOnly}
               >
                 <SelectTrigger>
                   <SelectValue placeholder="Choisir une catégorie" />
@@ -269,8 +399,12 @@ export function CreateTripDialog({ open, onOpenChange }: CreateTripDialogProps) 
               <Select
                 value={formData.status}
                 onValueChange={(value) =>
-                  setFormData((prev) => ({ ...prev, status: value }))
+                  setFormData((prev) => ({
+                    ...prev,
+                    status: value as typeof prev.status,
+                  }))
                 }
+                disabled={isReadOnly}
               >
                 <SelectTrigger>
                   <SelectValue placeholder="Statut du trajet" />
@@ -294,6 +428,7 @@ export function CreateTripDialog({ open, onOpenChange }: CreateTripDialogProps) 
                 onValueChange={(value) =>
                   setFormData((prev) => ({ ...prev, chauffeurId: value }))
                 }
+                disabled={isReadOnly}
               >
                 <SelectTrigger>
                   <SelectValue placeholder="Sélectionner un chauffeur" />
@@ -311,19 +446,24 @@ export function CreateTripDialog({ open, onOpenChange }: CreateTripDialogProps) 
             <div className="space-y-2">
               <Label>Véhicule (optionnel)</Label>
               <Select
-                value={formData.vehicleId}
+                value={formData.vehicleId || "none"}
                 onValueChange={(value) =>
-                  setFormData((prev) => ({ ...prev, vehicleId: value }))
+                  setFormData((prev) => ({
+                    ...prev,
+                    vehicleId: value === "none" ? "" : value,
+                  }))
                 }
+                disabled={isReadOnly}
               >
                 <SelectTrigger>
                   <SelectValue placeholder="Aucun véhicule assigné" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">Aucun véhicule</SelectItem>
+                  <SelectItem value="none">Aucun véhicule</SelectItem>
                   {vehicles.map((vehicle) => (
                     <SelectItem key={vehicle.id} value={vehicle.id}>
-                      {vehicle.immatriculation} • {vehicle.marque} {vehicle.modele}
+                      {vehicle.immatriculation} • {vehicle.marque}{" "}
+                      {vehicle.modele}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -332,7 +472,9 @@ export function CreateTripDialog({ open, onOpenChange }: CreateTripDialogProps) 
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="notes">Notes (ordre de mission, consignes...)</Label>
+            <Label htmlFor="notes">
+              Notes (ordre de mission, consignes...)
+            </Label>
             <Textarea
               id="notes"
               placeholder="Ex: Passage par l'école primaire, vérifier les documents du passager..."
@@ -341,6 +483,7 @@ export function CreateTripDialog({ open, onOpenChange }: CreateTripDialogProps) 
                 setFormData((prev) => ({ ...prev, notes: e.target.value }))
               }
               rows={3}
+              disabled={isReadOnly}
             />
           </div>
 
@@ -350,18 +493,22 @@ export function CreateTripDialog({ open, onOpenChange }: CreateTripDialogProps) 
               variant="outline"
               onClick={() => onOpenChange(false)}
             >
-              Annuler
+              {isView ? "Fermer" : "Annuler"}
             </Button>
-            <Button type="submit" disabled={createTrip.isPending}>
-              {createTrip.isPending && (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              )}
-              Créer
-            </Button>
+            {!isView && (
+              <Button
+                type="submit"
+                disabled={isCreate ? createTrip.isPending : updateTrip.isPending}
+              >
+                {(isCreate ? createTrip.isPending : updateTrip.isPending) && (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                )}
+                {isCreate ? "Créer" : "Enregistrer"}
+              </Button>
+            )}
           </div>
         </form>
       </DialogContent>
     </Dialog>
   );
 }
-

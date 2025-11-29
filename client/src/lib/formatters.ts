@@ -5,7 +5,12 @@ import type { VehicleCardProps } from "@/components/VehicleCard";
 
 const TRIP_STATUSES: TripCardProps["statut"][] = ["planifie", "en_cours", "termine", "annule"];
 const VEHICLE_STATUSES: VehicleCardProps["statut"][] = ["disponible", "en_route", "en_maintenance"];
-const RESERVATION_STATUSES: ReservationCardProps["statut"][] = ["en_attente", "confirme", "annule", "termine"];
+const RESERVATION_STATUSES: ReservationCardProps["statut"][] = [
+  "pending_payment",
+  "paid",
+  "annule",
+  "termine",
+];
 
 function normalizeValue<T extends string>(value: string | null | undefined, allowed: readonly T[], fallback: T): T {
   if (value && allowed.includes(value as T)) {
@@ -22,8 +27,28 @@ export function normalizeVehicleStatus(status: Vehicle["statut"]): VehicleCardPr
   return normalizeValue(status ?? undefined, VEHICLE_STATUSES, "disponible");
 }
 
-export function normalizeReservationStatus(status: Reservation["statut"]): ReservationCardProps["statut"] {
-  return normalizeValue(status ?? undefined, RESERVATION_STATUSES, "en_attente");
+export function normalizeReservationStatus(
+  status: Reservation["statut"],
+): ReservationCardProps["statut"] {
+  const raw = (status ?? undefined) as string | undefined;
+  // Compatibilité avec les anciens statuts éventuels côté base (en_attente, confirme, ...)
+  if (!raw) {
+    return "pending_payment";
+  }
+  const normalized = raw.toLowerCase();
+  if (normalized === "pending_payment" || normalized === "en_attente" || normalized === "pending") {
+    return "pending_payment";
+  }
+  if (normalized === "paid" || normalized === "confirme" || normalized === "confirmed") {
+    return "paid";
+  }
+  if (normalized === "annule" || normalized === "cancelled") {
+    return "annule";
+  }
+  if (normalized === "termine" || normalized === "completed") {
+    return "termine";
+  }
+  return "pending_payment";
 }
 
 export function toNumber(value: string | number | null | undefined): number {

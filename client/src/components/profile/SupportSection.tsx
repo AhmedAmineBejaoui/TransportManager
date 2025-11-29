@@ -1,20 +1,32 @@
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { HelpCircle, Mail, Phone, MessageSquare, ExternalLink } from "lucide-react";
+import {
+  HelpCircle,
+  Mail,
+  Phone,
+  MessageSquare,
+  ExternalLink,
+} from "lucide-react";
 
 const SUPPORT_CHANNELS = [
   {
     icon: Mail,
     title: "Email",
-    description: "support@transportmanager.tn",
-    action: "mailto:support@transportmanager.tn",
+    description: "ahmedamin.bejaoui@issatm.ucar.tn",
+    action: "mailto:ahmedamin.bejaoui@issatm.ucar.tn",
   },
   {
     icon: Phone,
     title: "Téléphone",
-    description: "+216 70 123 456",
-    action: "tel:+21670123456",
+    description: "+216 55 799 176",
+    action: "tel:+216 55 799 176",
   },
   {
     icon: MessageSquare,
@@ -27,11 +39,13 @@ const SUPPORT_CHANNELS = [
 const FAQ_TOPICS = [
   {
     title: "Comment modifier mon profil?",
-    description: "Allez à l'onglet 'Personnel' pour mettre à jour vos informations",
+    description:
+      "Allez à l'onglet 'Personnel' pour mettre à jour vos informations",
   },
   {
     title: "Comment changer mon mot de passe?",
-    description: "Rendez-vous à l'onglet 'Sécurité' et cliquez sur 'Changer le mot de passe'",
+    description:
+      "Rendez-vous à l'onglet 'Sécurité' et cliquez sur 'Changer le mot de passe'",
   },
   {
     title: "Comment télécharger mes données?",
@@ -45,11 +59,13 @@ const FAQ_TOPICS = [
   },
   {
     title: "Comment gérer mes moyens de paiement?",
-    description: "Allez à l'onglet 'Transport' pour ajouter ou supprimer vos moyens de paiement",
+    description:
+      "Allez à l'onglet 'Transport' pour ajouter ou supprimer vos moyens de paiement",
   },
   {
     title: "Comment modifier mes préférences de notification?",
-    description: "Dans l'onglet 'Préférences', activez ou désactivez les types de notifications",
+    description:
+      "Dans l'onglet 'Préférences', activez ou désactivez les types de notifications",
   },
 ];
 
@@ -66,20 +82,29 @@ export default function SupportSection() {
           {SUPPORT_CHANNELS.map((channel) => {
             const Icon = channel.icon;
             return (
-              <Card key={channel.title} className="hover:shadow-md transition cursor-pointer">
+              <Card
+                key={channel.title}
+                className="hover:shadow-md transition cursor-pointer"
+              >
                 <CardContent className="pt-6">
                   <div className="flex items-center gap-3 mb-3">
                     <Icon className="h-5 w-5 text-primary" />
                     <p className="font-semibold">{channel.title}</p>
                   </div>
-                  <p className="text-sm text-muted-foreground">{channel.description}</p>
+                  <p className="text-sm text-muted-foreground">
+                    {channel.description}
+                  </p>
                   <Button
                     variant="ghost"
                     size="sm"
                     asChild
                     className="mt-3 p-0 h-auto gap-1"
                   >
-                    <a href={channel.action} target="_blank" rel="noopener noreferrer">
+                    <a
+                      href={channel.action}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
                       Contacter
                       <ExternalLink className="h-3 w-3" />
                     </a>
@@ -93,10 +118,15 @@ export default function SupportSection() {
 
       {/* FAQ */}
       <div>
-        <h3 className="text-lg font-semibold mb-3">Questions fréquemment posées</h3>
+        <h3 className="text-lg font-semibold mb-3">
+          Questions fréquemment posées
+        </h3>
         <div className="space-y-2">
           {FAQ_TOPICS.map((topic, idx) => (
-            <Card key={idx} className="hover:bg-muted/50 transition cursor-pointer">
+            <Card
+              key={idx}
+              className="hover:bg-muted/50 transition cursor-pointer"
+            >
               <CardContent className="pt-6">
                 <div className="flex items-start gap-3">
                   <Badge variant="outline" className="mt-0.5">
@@ -104,7 +134,9 @@ export default function SupportSection() {
                   </Badge>
                   <div className="flex-1">
                     <p className="font-medium text-base">{topic.title}</p>
-                    <p className="text-sm text-muted-foreground mt-1">{topic.description}</p>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      {topic.description}
+                    </p>
                   </div>
                 </div>
               </CardContent>
@@ -116,12 +148,14 @@ export default function SupportSection() {
       {/* Information RGPD */}
       <Card className="bg-blue-50 dark:bg-blue-950 border-blue-200 dark:border-blue-800">
         <CardHeader>
-          <CardTitle className="text-base">Protection des données (RGPD)</CardTitle>
+          <CardTitle className="text-base">
+            Protection des données (RGPD)
+          </CardTitle>
         </CardHeader>
         <CardContent className="space-y-2 text-sm">
           <p>
-            Nous respectons pleinement les réglementations de protection des données personnelles.
-            Vous avez le droit de:
+            Nous respectons pleinement les réglementations de protection des
+            données personnelles. Vous avez le droit de:
           </p>
           <ul className="list-disc list-inside space-y-1 ml-2">
             <li>Accéder à vos données personnelles</li>
@@ -136,36 +170,6 @@ export default function SupportSection() {
               politique de confidentialité
             </Button>
           </p>
-        </CardContent>
-      </Card>
-
-      {/* Ressources */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Ressources utiles</CardTitle>
-          <CardDescription>Documentations et guides</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-2">
-            <Button variant="ghost" asChild className="justify-start p-0 h-auto gap-2">
-              <a href="#" target="_blank" rel="noopener noreferrer">
-                <ExternalLink className="h-4 w-4" />
-                Guide complet de TransportManager
-              </a>
-            </Button>
-            <Button variant="ghost" asChild className="justify-start p-0 h-auto gap-2">
-              <a href="#" target="_blank" rel="noopener noreferrer">
-                <ExternalLink className="h-4 w-4" />
-                Conditions d'utilisation
-              </a>
-            </Button>
-            <Button variant="ghost" asChild className="justify-start p-0 h-auto gap-2">
-              <a href="#" target="_blank" rel="noopener noreferrer">
-                <ExternalLink className="h-4 w-4" />
-                Politique de confidentialité
-              </a>
-            </Button>
-          </div>
         </CardContent>
       </Card>
     </div>

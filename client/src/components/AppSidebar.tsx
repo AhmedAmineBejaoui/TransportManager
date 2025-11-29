@@ -23,6 +23,7 @@ import {
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Link, useLocation } from "wouter";
+import { useAuth } from "@/lib/auth";
 
 type SidebarProps = {
   userRole: "ADMIN" | "CHAUFFEUR" | "CLIENT";
@@ -31,6 +32,7 @@ type SidebarProps = {
 
 export function AppSidebar({ userRole, userName }: SidebarProps) {
   const [location] = useLocation();
+  const { logout } = useAuth();
 
   const adminItems = [
     { title: "Dashboard", url: "/admin", icon: LayoutDashboard },
@@ -60,39 +62,40 @@ export function AppSidebar({ userRole, userName }: SidebarProps) {
 
   const initials = userName
     .split(" ")
-    .map(n => n[0])
+    .map((n) => n[0])
     .join("")
     .toUpperCase()
     .slice(0, 2);
 
   return (
-    <Sidebar data-testid="sidebar-main">
-      <SidebarHeader className="p-4">
-        <div className="flex items-center gap-2">
-          <div className="h-8 w-8 rounded-md bg-primary flex items-center justify-center">
-            <Bus className="h-5 w-5 text-primary-foreground" />
+    <Sidebar data-testid="sidebar-main" className="border-r border-white/10 bg-sidebar/60 backdrop-blur-xl shadow-xl">
+      <SidebarHeader className="p-6 pb-2">
+        <div className="flex items-center gap-3">
+          <div className="h-10 w-10 rounded-xl flex items-center justify-center">
+            <img src="/logo.png" alt="Logo" className="h-full w-full object-contain" />
           </div>
           <div>
-            <h1 className="text-lg font-semibold">TransportPro</h1>
-            <p className="text-xs text-muted-foreground">{userRole}</p>
+            <h1 className="text-xl font-bold font-heading tracking-tight">TransportPro</h1>
+            <p className="text-xs font-medium text-muted-foreground bg-secondary/50 px-2 py-0.5 rounded-full inline-block mt-1">{userRole}</p>
           </div>
         </div>
       </SidebarHeader>
 
-      <SidebarContent>
+      <SidebarContent className="px-3 py-4">
         <SidebarGroup>
-          <SidebarGroupLabel>Navigation</SidebarGroupLabel>
+          <SidebarGroupLabel className="text-xs font-bold uppercase tracking-wider text-muted-foreground/70 px-4 mb-2">Menu Principal</SidebarGroupLabel>
           <SidebarGroupContent>
-            <SidebarMenu>
+            <SidebarMenu className="gap-1.5">
               {items.map((item) => (
                 <SidebarMenuItem key={item.title}>
                   <SidebarMenuButton
                     asChild
                     isActive={location === item.url}
-                    data-testid={`sidebar-link-${item.title.toLowerCase().replace(/\s+/g, '-')}`}
+                    data-testid={`sidebar-link-${item.title.toLowerCase().replace(/\s+/g, "-")}`}
+                    className="px-4 py-3 h-auto rounded-xl transition-all duration-200 hover:bg-sidebar-accent/50 data-[active=true]:bg-primary data-[active=true]:text-primary-foreground data-[active=true]:shadow-lg data-[active=true]:shadow-primary/25"
                   >
-                    <Link href={item.url}>
-                      <item.icon className="h-4 w-4" />
+                    <Link href={item.url} className="flex items-center gap-3 font-medium">
+                      <item.icon className="h-5 w-5 opacity-80" />
                       <span>{item.title}</span>
                     </Link>
                   </SidebarMenuButton>
@@ -102,13 +105,13 @@ export function AppSidebar({ userRole, userName }: SidebarProps) {
           </SidebarGroupContent>
         </SidebarGroup>
 
-        <SidebarGroup>
+        <SidebarGroup className="mt-auto">
           <SidebarGroupContent>
             <SidebarMenu>
               <SidebarMenuItem>
-                <SidebarMenuButton asChild data-testid="sidebar-link-settings">
-                  <Link href="/settings">
-                    <Settings className="h-4 w-4" />
+                <SidebarMenuButton asChild data-testid="sidebar-link-settings" className="px-4 py-3 h-auto rounded-xl hover:bg-sidebar-accent/50">
+                  <Link href="/settings" className="flex items-center gap-3 font-medium">
+                    <Settings className="h-5 w-5 opacity-80" />
                     <span>Paramètres</span>
                   </Link>
                 </SidebarMenuButton>
@@ -118,22 +121,26 @@ export function AppSidebar({ userRole, userName }: SidebarProps) {
         </SidebarGroup>
       </SidebarContent>
 
-      <SidebarFooter className="p-4">
-        <div className="flex items-center justify-between">
+      <SidebarFooter className="p-4 border-t border-white/5">
+        <div className="flex items-center justify-between bg-card/50 p-3 rounded-2xl border border-white/5 shadow-sm">
           <div className="flex items-center gap-3">
-            <Avatar>
-              <AvatarFallback>{initials}</AvatarFallback>
+            <Avatar className="h-9 w-9 border-2 border-primary/20">
+              <AvatarFallback className="bg-primary/10 text-primary font-bold">{initials}</AvatarFallback>
             </Avatar>
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium truncate">{userName}</p>
-              <p className="text-xs text-muted-foreground">En ligne</p>
+              <p className="text-sm font-bold truncate font-heading">{userName}</p>
+              <div className="flex items-center gap-1.5">
+                <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+                <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">En ligne</p>
+              </div>
             </div>
           </div>
           <Button
             variant="ghost"
             size="icon"
             data-testid="button-logout"
-            onClick={() => console.log("Déconnexion")}
+            onClick={() => logout()}
+            className="h-8 w-8 rounded-lg hover:bg-destructive/10 hover:text-destructive transition-colors"
           >
             <LogOut className="h-4 w-4" />
           </Button>

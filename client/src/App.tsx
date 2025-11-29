@@ -1,4 +1,5 @@
 import { Switch, Route, Redirect } from "wouter";
+import { motion } from "framer-motion";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
@@ -9,6 +10,7 @@ import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { AppSidebar } from "@/components/AppSidebar";
+import { FloatingSupportChat } from "@/components/FloatingSupportChat";
 import { useAuth } from "@/lib/auth";
 import { getClientRole } from "@shared/roles";
 
@@ -32,24 +34,74 @@ import AdminScanner from "@/pages/AdminScanner";
 
 function AuthenticatedLayout({ children, userRole, userName }: { children: React.ReactNode; userRole: "ADMIN" | "CHAUFFEUR" | "CLIENT"; userName: string }) {
   const style = {
-    "--sidebar-width": "16rem",
+    "--sidebar-width": "18rem",
     "--sidebar-width-icon": "3rem",
   };
 
   return (
     <SidebarProvider style={style as React.CSSProperties}>
-      <div className="flex h-screen w-full">
-        <AppSidebar userRole={userRole} userName={userName} />
-        <div className="flex flex-col flex-1 overflow-hidden">
-          <header className="flex items-center justify-between p-4 border-b">
-            <SidebarTrigger data-testid="button-sidebar-toggle" />
-            <ThemeToggle />
-          </header>
-          <main className="flex-1 overflow-auto p-6">
-            {children}
-          </main>
+      <div className="relative flex min-h-screen w-full bg-background text-foreground overflow-hidden font-sans selection:bg-primary/20 selection:text-primary">
+        {/* Dynamic Background */}
+        <div className="fixed inset-0 z-0 pointer-events-none">
+          <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-primary/10 via-background to-background" />
+          <motion.div
+            className="absolute -left-[10%] -top-[10%] h-[50vh] w-[50vw] rounded-full bg-primary/20 blur-[120px] opacity-50 mix-blend-multiply dark:mix-blend-screen"
+            animate={{ 
+              x: [0, 50, -30, 0], 
+              y: [0, -40, 20, 0],
+              scale: [1, 1.1, 0.9, 1]
+            }}
+            transition={{ duration: 20, repeat: Infinity, ease: "easeInOut" }}
+          />
+          <motion.div
+            className="absolute -right-[10%] top-[20%] h-[40vh] w-[40vw] rounded-full bg-cyan-400/20 blur-[100px] opacity-40 mix-blend-multiply dark:mix-blend-screen"
+            animate={{ 
+              x: [0, -40, 30, 0], 
+              y: [0, 50, -20, 0],
+              scale: [1, 0.9, 1.1, 1]
+            }}
+            transition={{ duration: 25, repeat: Infinity, ease: "easeInOut", delay: 2 }}
+          />
+          <motion.div
+            className="absolute left-[20%] bottom-[-10%] h-[40vh] w-[40vw] rounded-full bg-pink-400/20 blur-[100px] opacity-40 mix-blend-multiply dark:mix-blend-screen"
+            animate={{ 
+              x: [0, 30, -50, 0], 
+              y: [0, -30, 40, 0],
+              scale: [1, 1.2, 0.8, 1]
+            }}
+            transition={{ duration: 22, repeat: Infinity, ease: "easeInOut", delay: 5 }}
+          />
+        </div>
+
+        <div className="relative z-10 flex h-full w-full">
+          <AppSidebar userRole={userRole} userName={userName} />
+          <div className="flex flex-col flex-1 overflow-hidden">
+            <motion.header
+              className="sticky top-0 z-20 flex items-center justify-between px-6 py-4 lg:px-8 backdrop-blur-md bg-background/40 border-b border-white/10"
+              initial={{ opacity: 0, y: -20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.4, ease: "easeOut" }}
+            >
+              <SidebarTrigger data-testid="button-sidebar-toggle" className="h-10 w-10 rounded-xl hover:bg-primary/10 hover:text-primary transition-colors" />
+              <div className="flex items-center gap-4">
+                <ThemeToggle />
+              </div>
+            </motion.header>
+
+            <motion.main
+              className="relative z-10 flex-1 overflow-auto p-6 lg:p-10 scroll-smooth"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.5, ease: "easeOut", delay: 0.1 }}
+            >
+              <div className="mx-auto flex w-full max-w-7xl flex-col gap-8 pb-20">
+                {children}
+              </div>
+            </motion.main>
+          </div>
         </div>
       </div>
+      <FloatingSupportChat />
     </SidebarProvider>
   );
 }

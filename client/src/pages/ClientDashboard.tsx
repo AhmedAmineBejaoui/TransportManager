@@ -12,30 +12,35 @@ import { FeedbackDialog } from "@/components/FeedbackDialog";
 import { useTrips } from "@/hooks/useTrips";
 import { TripCard } from "@/components/TripCard";
 import { DashboardMap } from "@/components/DashboardMap";
+import { buildTripCardModel } from "@/lib/formatters";
 
 export default function ClientDashboard() {
-  // search params are handled by the search form; we show toast on search
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [reservationDialogOpen, setReservationDialogOpen] = useState(false);
-  // selectedTripId will be passed to reservation dialog when created
   const [selectedTripId, setSelectedTripId] = useState<string | null>(null);
-
-
+  const [routeQuery, setRouteQuery] = useState<{ depart: string; arrivee: string } | null>(null);
 
   const { toast } = useToast();
 
   const handleSearch = (data: { depart: string; arrivee: string; date?: Date }) => {
+    setRouteQuery({ depart: data.depart, arrivee: data.arrivee });
     toast({
-      title: "Recherche effectuée",
-      description: "Chargement des trajets...",
+      title: "Recherche effectuee",
+      description: "Calcul de l'itineraire et des distances...",
     });
   };
 
   const { data: trips = [] } = useTrips();
 
-  // Reservation handled by trip list or other views; keep state for dialog
-  
-  console.log("🎯 ClientDashboard rendering");
+  // Ne montrer que les trajets a venir et non annules/termines, mais si aucun, afficher quand m��me les derniers trajets
+  const upcomingTrips = trips.filter((t: any) => {
+    const statut = (t.statut as string | null) ?? "planifie";
+    if (statut === "annule" || statut === "termine") return false;
+    if (!t.heure_depart_prevue) return true;
+    const dep = new Date(t.heure_depart_prevue);
+    return Number.isFinite(dep.getTime()) && dep.getTime() >= Date.now();
+  });
+  const visibleTrips = (upcomingTrips.length ? upcomingTrips : trips).slice(0, 6);
 
   const handleOpenReservation = (tripId: string) => {
     setSelectedTripId(tripId);
@@ -44,11 +49,12 @@ export default function ClientDashboard() {
 
   return (
     <div className="space-y-6">
-      {/* En-tête principal (titre de page) */}
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h1 className="text-3xl font-semibold">Rechercher un trajet</h1>
-          <p className="text-muted-foreground mt-1">Trouvez le trajet parfait pour votre voyage</p>
+          <p className="text-muted-foreground mt-1">
+            Trouvez le trajet parfait pour votre voyage
+          </p>
         </div>
         <Button
           variant="outline"
@@ -60,7 +66,6 @@ export default function ClientDashboard() {
         </Button>
       </div>
 
-      {/* Formulaire de recherche + carte fidélité */}
       <div className="grid gap-4 lg:grid-cols-[2fr,1fr]">
         <SearchTripForm onSearch={handleSearch} />
         <div className="space-y-4">
@@ -68,34 +73,32 @@ export default function ClientDashboard() {
         </div>
       </div>
 
-      {/* Carte de géolocalisation */}
-      <DashboardMap height="h-[500px]" />
+      <DashboardMap
+        height="h-[500px]"
+        origin={routeQuery?.depart}
+        destination={routeQuery?.arrivee}
+      />
 
-      {/* Flux en temps réel - affichage de cartes de trajets */}
       <div>
-        <h2 className="text-lg font-semibold mb-3">Flux en temps réel</h2>
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {trips.slice(0, 6).map((t: any) => (
-            <TripCard
-              key={t.id}
-              id={t.id}
-              depart={t.depart}
-              arrivee={t.arrivee}
-              heureDepart={new Date(t.date_depart)}
-              heureArrivee={new Date(t.date_arrivee)}
-              prix={t.prix ?? 0}
-              placesDisponibles={t.places_disponibles ?? 0}
-              capaciteTotal={t.capacite_total}
-              statut={t.statut ?? "planifie"}
-              chauffeur={t.chauffeur}
-              vehicule={t.vehicule}
-              onReserver={() => handleOpenReservation(t.id)}
-            />
-          ))}
-        </div>
+        <h2 className="text-lg font-semibold mb-3">Flux en temps reel</h2>
+        {visibleTrips.length === 0 ? (
+          <p className="text-sm text-muted-foreground">Aucun trajet disponible pour le moment.</p>
+        ) : (
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {visibleTrips.map((trip: any) => {
+              const model = buildTripCardModel(trip);
+              return (
+                <TripCard
+                  key={model.id}
+                  {...model}
+                  onReserver={() => handleOpenReservation(model.id)}
+                />
+              );
+            })}
+          </div>
+        )}
       </div>
 
-      {/* Partage et feedback */}
       <div className="grid gap-4 lg:grid-cols-[2fr,1fr]">
         <SocialShareEditor />
         <FeedbackDialog />
@@ -110,4 +113,3 @@ export default function ClientDashboard() {
     </div>
   );
 }
-

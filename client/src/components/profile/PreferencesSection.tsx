@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useProfile, useUpdateProfile } from "@/hooks/useProfile";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -14,6 +14,17 @@ export default function PreferencesSection() {
     reservations: profile?.notifications_reservations ?? true,
     alertes: profile?.notifications_alertes ?? true,
   });
+
+  // Met à jour les switchs quand le profil est chargé
+  useEffect(() => {
+    if (profile) {
+      setNotifications({
+        email: profile.notifications_email ?? true,
+        reservations: profile.notifications_reservations ?? true,
+        alertes: profile.notifications_alertes ?? true,
+      });
+    }
+  }, [profile]);
 
   const handleToggle = (key: keyof typeof notifications) => {
     setNotifications((prev) => ({

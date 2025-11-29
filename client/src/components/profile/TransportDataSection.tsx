@@ -1,6 +1,16 @@
 import { useState } from "react";
-import { usePaymentMethods, useAddPaymentMethod, useDeletePaymentMethod } from "@/hooks/useProfile";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  usePaymentMethods,
+  useAddPaymentMethod,
+  useDeletePaymentMethod,
+} from "@/hooks/useProfile";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -71,7 +81,9 @@ export default function TransportDataSection() {
           <div className="flex items-center justify-between">
             <div>
               <CardTitle>Moyens de paiement</CardTitle>
-              <CardDescription>Gérez vos méthodes de paiement enregistrées</CardDescription>
+              <CardDescription>
+                Gérez vos méthodes de paiement enregistrées
+              </CardDescription>
             </div>
             <Button
               size="sm"
@@ -92,14 +104,19 @@ export default function TransportDataSection() {
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label htmlFor="type">Type de paiement</Label>
-                    <Select value={formData.type} onValueChange={handleTypeChange}>
+                    <Select
+                      value={formData.type}
+                      onValueChange={handleTypeChange}
+                    >
                       <SelectTrigger id="type">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="carte">Carte bancaire</SelectItem>
                         <SelectItem value="paypal">PayPal</SelectItem>
-                        <SelectItem value="virement">Virement bancaire</SelectItem>
+                        <SelectItem value="virement">
+                          Virement bancaire
+                        </SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -119,7 +136,9 @@ export default function TransportDataSection() {
 
                 {formData.type === "carte" && (
                   <div className="space-y-2">
-                    <Label htmlFor="derniersChiffres">4 derniers chiffres</Label>
+                    <Label htmlFor="derniersChiffres">
+                      4 derniers chiffres
+                    </Label>
                     <Input
                       id="derniersChiffres"
                       name="derniersChiffres"
@@ -140,14 +159,19 @@ export default function TransportDataSection() {
                     onChange={handleChange}
                     className="rounded"
                   />
-                  <Label htmlFor="estParDefaut" className="font-normal cursor-pointer">
+                  <Label
+                    htmlFor="estParDefaut"
+                    className="font-normal cursor-pointer"
+                  >
                     Utiliser par défaut
                   </Label>
                 </div>
 
                 <div className="flex gap-2">
                   <Button type="submit" disabled={addPaymentMethod.isPending}>
-                    {addPaymentMethod.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                    {addPaymentMethod.isPending && (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    )}
                     Ajouter
                   </Button>
                   <Button
@@ -180,8 +204,8 @@ export default function TransportDataSection() {
                         {method.type === "carte"
                           ? `•••• ${method.derniersChiffres}`
                           : method.type === "paypal"
-                            ? "PayPal"
-                            : "Virement bancaire"}
+                          ? "PayPal"
+                          : "Virement bancaire"}
                       </p>
                     </div>
                   </div>
@@ -206,27 +230,6 @@ export default function TransportDataSection() {
               Aucun moyen de paiement enregistré
             </div>
           )}
-        </CardContent>
-      </Card>
-
-      {/* Historique des trajets */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <History className="h-5 w-5" />
-            Historique des trajets
-          </CardTitle>
-          <CardDescription>
-            Consulter votre historique de trajets réservés ou effectués
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="p-4 bg-muted/50 rounded-lg text-center text-muted-foreground">
-            <p>Accédez à votre historique de trajets depuis la section "Mes réservations"</p>
-            <Button variant="ghost" className="mt-2">
-              Voir mes réservations
-            </Button>
-          </div>
         </CardContent>
       </Card>
     </div>

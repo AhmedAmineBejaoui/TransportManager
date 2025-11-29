@@ -47,6 +47,8 @@ export function useCreateIncident() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/chauffeur/incidents"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/dashboard"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/stats"] });
     },
   });
 }

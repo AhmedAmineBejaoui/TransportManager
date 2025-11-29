@@ -59,6 +59,8 @@ export function useUpdateTrip() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/trips"] });
       queryClient.invalidateQueries({ queryKey: ["/api/chauffeur/trips"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/dashboard"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/stats"] });
     },
   });
 }
@@ -71,6 +73,8 @@ export function useCreateTrip() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/trips"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/dashboard"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/stats"] });
     },
   });
 }
@@ -83,6 +87,8 @@ export function useDeleteTrip() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/trips"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/dashboard"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/stats"] });
     },
   });
 }
@@ -98,6 +104,8 @@ export function useAdminCreateTrip() {
       queryClient.invalidateQueries({ queryKey: ["/api/trips"] });
       queryClient.invalidateQueries({ queryKey: ["/api/chauffeur/trips"] });
       queryClient.invalidateQueries({ queryKey: ["/api/chauffeur/calendar"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/dashboard"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/stats"] });
     },
   });
 }
@@ -113,6 +121,8 @@ export function useAdminUpdateTrip() {
       queryClient.invalidateQueries({ queryKey: ["/api/trips"] });
       queryClient.invalidateQueries({ queryKey: ["/api/chauffeur/trips"] });
       queryClient.invalidateQueries({ queryKey: ["/api/chauffeur/calendar"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/dashboard"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/stats"] });
     },
   });
 }
@@ -128,6 +138,8 @@ export function useAdminDeleteTrip() {
       queryClient.invalidateQueries({ queryKey: ["/api/trips"] });
       queryClient.invalidateQueries({ queryKey: ["/api/chauffeur/trips"] });
       queryClient.invalidateQueries({ queryKey: ["/api/chauffeur/calendar"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/dashboard"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/stats"] });
     },
   });
 }

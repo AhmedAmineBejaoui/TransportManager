@@ -23,19 +23,17 @@ import { formatTripLabel, normalizeTripStatus } from "@/lib/formatters";
 
 export default function AdminTrips() {
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
-  const [chauffeurFilter, setChauffeurFilter] = useState("");
-  const [statusFilter, setStatusFilter] = useState("");
+  const [selectedTrip, setSelectedTrip] = useState<Trip | null>(null);
+  const [dialogMode, setDialogMode] = useState<"create" | "edit" | "view">("create");
+  const [chauffeurFilter, setChauffeurFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("all");
   const [dateFilter, setDateFilter] = useState("");
 
-  const { data: trips = [], isLoading } = useAdminTrips(
-    chauffeurFilter || statusFilter || dateFilter
-      ? {
-          chauffeurId: chauffeurFilter || undefined,
-          status: statusFilter || undefined,
-          date: dateFilter ? new Date(dateFilter) : undefined,
-        }
-      : undefined,
-  );
+  const { data: trips = [], isLoading } = useAdminTrips({
+    chauffeurId: chauffeurFilter === "all" ? undefined : chauffeurFilter,
+    status: statusFilter === "all" ? undefined : statusFilter,
+    date: dateFilter ? new Date(dateFilter) : undefined,
+  });
 
   const deleteTrip = useAdminDeleteTrip();
   const { data: users = [] } = useUsers();
@@ -58,19 +56,23 @@ export default function AdminTrips() {
   const statusConfig = {
     planifie: {
       label: "Planifié",
-      className: "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300",
+      className:
+        "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300",
     },
     en_cours: {
       label: "En cours",
-      className: "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300",
+      className:
+        "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300",
     },
     termine: {
       label: "Terminé",
-      className: "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-300",
+      className:
+        "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-300",
     },
     annule: {
       label: "Annulé",
-      className: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300",
+      className:
+        "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300",
     },
   } as const;
 
@@ -105,7 +107,7 @@ export default function AdminTrips() {
       header: "Chauffeur",
       render: (trip: Trip) =>
         trip.chauffeur_id
-          ? chauffeurNameById[trip.chauffeur_id] ||
+          ? chauffeurNameById[trip.chauffeur_id] ??
             `#${trip.chauffeur_id.slice(0, 8)}`
           : "Non assigné",
     },
@@ -127,6 +129,20 @@ export default function AdminTrips() {
   ];
 
   const handleCreateTrip = () => {
+    setSelectedTrip(null);
+    setDialogMode("create");
+    setCreateDialogOpen(true);
+  };
+
+  const handleViewTrip = (trip: Trip) => {
+    setSelectedTrip(trip);
+    setDialogMode("view");
+    setCreateDialogOpen(true);
+  };
+
+  const handleEditTrip = (trip: Trip) => {
+    setSelectedTrip(trip);
+    setDialogMode("edit");
     setCreateDialogOpen(true);
   };
 
@@ -178,7 +194,7 @@ export default function AdminTrips() {
               <SelectValue placeholder="Tous les chauffeurs" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="">Tous les chauffeurs</SelectItem>
+              <SelectItem value="all">Tous les chauffeurs</SelectItem>
               {chauffeurs.map((c) => (
                 <SelectItem key={c.id} value={c.id}>
                   {c.prenom} {c.nom}
@@ -187,6 +203,7 @@ export default function AdminTrips() {
             </SelectContent>
           </Select>
         </div>
+
         <div className="space-y-1">
           <label className="text-sm font-medium">Statut</label>
           <Select
@@ -197,13 +214,16 @@ export default function AdminTrips() {
               <SelectValue placeholder="Tous les statuts" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="">Tous les statuts</SelectItem>
-              <SelectItem value="coming">À venir</SelectItem>
-              <SelectItem value="pending_confirmation">En attente</SelectItem>
+              <SelectItem value="all">Tous les statuts</SelectItem>
+              <SelectItem value="waiting_chauffeur_confirmation">
+                En attente chauffeur
+              </SelectItem>
+              <SelectItem value="confirmed">Confirmé</SelectItem>
               <SelectItem value="completed">Terminé</SelectItem>
             </SelectContent>
           </Select>
         </div>
+
         <div className="space-y-1">
           <label className="text-sm font-medium">Date</label>
           <Input
@@ -220,17 +240,24 @@ export default function AdminTrips() {
         <DataTable
           data={trips}
           columns={columns}
-          onView={(trip) => console.log("View trip:", trip)}
-          onEdit={(trip) => console.log("Edit trip:", trip)}
+          onView={handleViewTrip}
+          onEdit={handleEditTrip}
           onDelete={handleDeleteTrip}
         />
       )}
 
       <CreateTripDialog
         open={createDialogOpen}
-        onOpenChange={setCreateDialogOpen}
+        onOpenChange={(open) => {
+          setCreateDialogOpen(open);
+          if (!open) {
+            setSelectedTrip(null);
+            setDialogMode("create");
+          }
+        }}
+        mode={dialogMode}
+        trip={selectedTrip}
       />
     </div>
   );
 }
-
