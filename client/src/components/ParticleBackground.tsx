@@ -73,7 +73,7 @@ export function ParticleBackground() {
 
         ctx.beginPath();
         ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
-        ctx.fillStyle = "#3b82f6"; // Blue-500
+        ctx.fillStyle = "#12d8ff";
         ctx.fill();
 
         // Draw connections
@@ -86,7 +86,7 @@ export function ParticleBackground() {
             ctx.beginPath();
             ctx.moveTo(p.x, p.y);
             ctx.lineTo(p2.x, p2.y);
-            ctx.strokeStyle = `rgba(59, 130, 246, ${1 - dist2 / 100})`;
+            ctx.strokeStyle = `rgba(18, 216, 255, ${1 - dist2 / 100})`;
             ctx.lineWidth = 0.5;
             ctx.stroke();
           }
@@ -116,9 +116,6 @@ export function ParticleBackground() {
   }, []);
 
   return (
-    <canvas
-      ref={canvasRef}
-      className="absolute inset-0 h-full w-full bg-white"
-    />
+    <canvas ref={canvasRef} className="absolute inset-0 h-full w-full" />
   );
 }

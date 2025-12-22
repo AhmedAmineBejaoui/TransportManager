@@ -43,7 +43,8 @@ export function SupportChatDrawer({ open, onOpenChange }: SupportChatDrawerProps
   const { data: thread, isFetching: loadingThread } =
     useSupportTicketThread(ticketId, {
       enabled: !!ticketId && open,
-      refetchInterval: open ? 1000 : false,
+      refetchInterval: open ? 10000 : false, // 10 secondes au lieu de 1
+      refetchOnWindowFocus: false, // Éviter les refetch inutiles
     });
 
   const createTicket = useCreateSupportTicket();

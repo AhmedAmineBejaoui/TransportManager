@@ -541,6 +541,140 @@ export const optimizationRules = pgTable("optimization_rules", {
   updated_at: timestamp("updated_at").defaultNow(),
 });
 
+// ==================== VEHICLE DETAILS ====================
+export const vehicleDetails = pgTable("vehicle_details", {
+  vehicle_id: varchar("vehicle_id").primaryKey().references(() => vehicles.id, { onDelete: "cascade" }),
+  type_carburant: text("type_carburant").default("diesel"), // diesel | essence | electrique | hybride
+  kilometrage: integer("kilometrage").default(0),
+  date_mise_service: timestamp("date_mise_service"),
+  charge_utile: text("charge_utile"), // e.g. "1.2 T"
+  niveau_carburant: integer("niveau_carburant").default(100), // pourcentage
+  niveau_batterie: integer("niveau_batterie").default(100), // pourcentage pour véhicules électriques/hybrides
+  couleur: text("couleur"),
+  vin: text("vin"), // numéro de série
+  equipements: jsonb("equipements").default(sql`'[]'::jsonb`), // GPS, climatisation, sièges enfants, etc.
+  updated_at: timestamp("updated_at").defaultNow(),
+});
+
+// ==================== VEHICLE MAINTENANCES ====================
+export const vehicleMaintenances = pgTable("vehicle_maintenances", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  vehicle_id: varchar("vehicle_id").notNull().references(() => vehicles.id, { onDelete: "cascade" }),
+  type: text("type").notNull(), // vidange | pneus | freins | filtres | courroie | autre
+  titre: text("titre").notNull(),
+  description: text("description"),
+  date_prevue: timestamp("date_prevue"),
+  date_effectuee: timestamp("date_effectuee"),
+  kilometrage_prevu: integer("kilometrage_prevu"),
+  kilometrage_effectue: integer("kilometrage_effectue"),
+  cout: decimal("cout", { precision: 10, scale: 2 }),
+  garage: text("garage"),
+  priorite: text("priorite").default("normale"), // basse | normale | haute | urgente
+  statut: text("statut").default("planifie"), // planifie | en_cours | termine | annule
+  pieces_changees: jsonb("pieces_changees").default(sql`'[]'::jsonb`),
+  notes: text("notes"),
+  created_at: timestamp("created_at").defaultNow(),
+  updated_at: timestamp("updated_at").defaultNow(),
+});
+
+// ==================== VEHICLE DOCUMENTS ====================
+export const vehicleDocuments = pgTable("vehicle_documents", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  vehicle_id: varchar("vehicle_id").notNull().references(() => vehicles.id, { onDelete: "cascade" }),
+  type: text("type").notNull(), // assurance | carte_grise | controle_technique | attestation | fiche_technique | autre
+  titre: text("titre").notNull(),
+  numero: text("numero"), // numéro du document
+  date_emission: timestamp("date_emission"),
+  date_expiration: timestamp("date_expiration"),
+  fichier_url: text("fichier_url"),
+  statut: text("statut").default("valide"), // valide | a_renouveler | expire
+  notes: text("notes"),
+  created_at: timestamp("created_at").defaultNow(),
+  updated_at: timestamp("updated_at").defaultNow(),
+});
+
+// ==================== VEHICLE INCIDENTS ====================
+export const vehicleIncidents = pgTable("vehicle_incidents", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  vehicle_id: varchar("vehicle_id").notNull().references(() => vehicles.id, { onDelete: "cascade" }),
+  chauffeur_id: varchar("chauffeur_id").references(() => users.id, { onDelete: "set null" }),
+  trip_id: varchar("trip_id").references(() => trips.id, { onDelete: "set null" }),
+  type: text("type").notNull(), // panne | rayure | accident | crevaison | autre
+  description: text("description").notNull(),
+  gravite: text("gravite").default("mineur"), // mineur | modere | majeur | critique
+  localisation: text("localisation"),
+  photos: jsonb("photos").default(sql`'[]'::jsonb`),
+  cout_reparation: decimal("cout_reparation", { precision: 10, scale: 2 }),
+  statut: text("statut").default("signale"), // signale | en_cours | repare | cloture
+  date_incident: timestamp("date_incident").defaultNow(),
+  date_resolution: timestamp("date_resolution"),
+  notes: text("notes"),
+  created_at: timestamp("created_at").defaultNow(),
+  updated_at: timestamp("updated_at").defaultNow(),
+});
+
+// ==================== VEHICLE CHECKLISTS ====================
+export const vehicleChecklists = pgTable("vehicle_checklists", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  vehicle_id: varchar("vehicle_id").notNull().references(() => vehicles.id, { onDelete: "cascade" }),
+  chauffeur_id: varchar("chauffeur_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  trip_id: varchar("trip_id").references(() => trips.id, { onDelete: "set null" }),
+  type: text("type").notNull(), // avant_depart | apres_mission
+  items: jsonb("items").default(sql`'[]'::jsonb`), // [{label: string, status: 'ok' | 'attention' | 'probleme', note?: string}]
+  kilometrage: integer("kilometrage"),
+  niveau_carburant: integer("niveau_carburant"),
+  commentaire_general: text("commentaire_general"),
+  signature: text("signature"), // base64 ou URL
+  completed_at: timestamp("completed_at"),
+  created_at: timestamp("created_at").defaultNow(),
+});
+
+// ==================== CHAUFFEUR EVENTS (Calendrier) ====================
+export const chauffeurEvents = pgTable("chauffeur_events", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  chauffeur_id: varchar("chauffeur_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  type: text("type").notNull(), // entretien_vehicule | formation | reunion | rdv_medical | autre
+  titre: text("titre").notNull(),
+  description: text("description"),
+  date_debut: timestamp("date_debut").notNull(),
+  date_fin: timestamp("date_fin"),
+  lieu: text("lieu"),
+  rappel: boolean("rappel").default(true),
+  rappel_minutes: integer("rappel_minutes").default(60),
+  statut: text("statut").default("planifie"), // planifie | confirme | annule | termine
+  metadata: jsonb("metadata").default(sql`'{}'::jsonb`),
+  created_at: timestamp("created_at").defaultNow(),
+  updated_at: timestamp("updated_at").defaultNow(),
+});
+
+// ==================== CHAUFFEUR LEAVES (Congés) ====================
+export const chauffeurLeaves = pgTable("chauffeur_leaves", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  chauffeur_id: varchar("chauffeur_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  type: text("type").notNull(), // conge_paye | maladie | sans_solde | formation | autre
+  date_debut: timestamp("date_debut").notNull(),
+  date_fin: timestamp("date_fin").notNull(),
+  motif: text("motif"),
+  statut: text("statut").default("en_attente"), // en_attente | valide | refuse | annule
+  approuve_par: varchar("approuve_par").references(() => users.id, { onDelete: "set null" }),
+  date_decision: timestamp("date_decision"),
+  commentaire_decision: text("commentaire_decision"),
+  justificatif_url: text("justificatif_url"),
+  created_at: timestamp("created_at").defaultNow(),
+  updated_at: timestamp("updated_at").defaultNow(),
+});
+
+// ==================== CHAUFFEUR UNAVAILABILITIES ====================
+export const chauffeurUnavailabilities = pgTable("chauffeur_unavailabilities", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  chauffeur_id: varchar("chauffeur_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  date_debut: timestamp("date_debut").notNull(),
+  date_fin: timestamp("date_fin").notNull(),
+  motif: text("motif"),
+  type: text("type").default("indisponibilite"), // indisponibilite | repos | personnel
+  created_at: timestamp("created_at").defaultNow(),
+});
+
 // Insert schemas
 const baseInsertUserSchema = createInsertSchema(users).omit({
   id: true,
@@ -736,6 +870,44 @@ export const insertUserActivitySchema = createInsertSchema(userActivity).omit({
 });
 export const insertSecurityThresholdSchema = createInsertSchema(securityThresholds).omit({});
 
+// Vehicle & Chauffeur Calendar schemas
+export const insertVehicleDetailsSchema = createInsertSchema(vehicleDetails).omit({
+  updated_at: true,
+});
+export const insertVehicleMaintenanceSchema = createInsertSchema(vehicleMaintenances).omit({
+  id: true,
+  created_at: true,
+  updated_at: true,
+});
+export const insertVehicleDocumentSchema = createInsertSchema(vehicleDocuments).omit({
+  id: true,
+  created_at: true,
+  updated_at: true,
+});
+export const insertVehicleIncidentSchema = createInsertSchema(vehicleIncidents).omit({
+  id: true,
+  created_at: true,
+  updated_at: true,
+});
+export const insertVehicleChecklistSchema = createInsertSchema(vehicleChecklists).omit({
+  id: true,
+  created_at: true,
+});
+export const insertChauffeurEventSchema = createInsertSchema(chauffeurEvents).omit({
+  id: true,
+  created_at: true,
+  updated_at: true,
+});
+export const insertChauffeurLeaveSchema = createInsertSchema(chauffeurLeaves).omit({
+  id: true,
+  created_at: true,
+  updated_at: true,
+});
+export const insertChauffeurUnavailabilitySchema = createInsertSchema(chauffeurUnavailabilities).omit({
+  id: true,
+  created_at: true,
+});
+
 // Types
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type User = typeof users.$inferSelect;
@@ -831,6 +1003,25 @@ export type InsertUserActivity = z.infer<typeof insertUserActivitySchema>;
 export type UserActivity = typeof userActivity.$inferSelect;
 export type InsertSecurityThreshold = z.infer<typeof insertSecurityThresholdSchema>;
 export type SecurityThreshold = typeof securityThresholds.$inferSelect;
+
+// Vehicle & Chauffeur Calendar types
+export type InsertVehicleDetails = z.infer<typeof insertVehicleDetailsSchema>;
+export type VehicleDetails = typeof vehicleDetails.$inferSelect;
+export type InsertVehicleMaintenance = z.infer<typeof insertVehicleMaintenanceSchema>;
+export type VehicleMaintenance = typeof vehicleMaintenances.$inferSelect;
+export type InsertVehicleDocument = z.infer<typeof insertVehicleDocumentSchema>;
+export type VehicleDocument = typeof vehicleDocuments.$inferSelect;
+export type InsertVehicleIncident = z.infer<typeof insertVehicleIncidentSchema>;
+export type VehicleIncident = typeof vehicleIncidents.$inferSelect;
+export type InsertVehicleChecklist = z.infer<typeof insertVehicleChecklistSchema>;
+export type VehicleChecklist = typeof vehicleChecklists.$inferSelect;
+export type InsertChauffeurEvent = z.infer<typeof insertChauffeurEventSchema>;
+export type ChauffeurEvent = typeof chauffeurEvents.$inferSelect;
+export type InsertChauffeurLeave = z.infer<typeof insertChauffeurLeaveSchema>;
+export type ChauffeurLeave = typeof chauffeurLeaves.$inferSelect;
+export type InsertChauffeurUnavailability = z.infer<typeof insertChauffeurUnavailabilitySchema>;
+export type ChauffeurUnavailability = typeof chauffeurUnavailabilities.$inferSelect;
+
 export const insertReservationOptionsSchema = createInsertSchema(reservationOptions).omit({
   id: true,
 });

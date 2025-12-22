@@ -18,14 +18,59 @@ export async function apiRequest(
   url: string,
   data?: unknown,
 ): Promise<Response> {
+  // Attach Authorization header if JWT present (localStorage)
+  const token = typeof window !== "undefined" ? localStorage.getItem("auth:jwt") : null;
+
+  const headers: Record<string, string> = data ? { "Content-Type": "application/json" } : {};
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+
   const res = await fetch(url, {
     method,
-    headers: data ? { "Content-Type": "application/json" } : {},
+    headers,
     body: data ? JSON.stringify(data) : undefined,
 
     // 🔥 Indispensable pour envoyer les cookies
     credentials: "include",
   });
+
+  // If unauthorized and a refresh token is available, try refresh flow once
+  if (res.status === 401) {
+    const refresh = typeof window !== "undefined" ? localStorage.getItem("auth:refresh") : null;
+    if (refresh) {
+      try {
+        const refreshRes = await fetch("/api/auth/refresh", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ refreshToken: refresh }),
+          credentials: "include",
+        });
+        if (refreshRes.ok) {
+          const payload = await refreshRes.json();
+          if (payload.jwt) {
+            localStorage.setItem("auth:jwt", payload.jwt);
+          }
+          if (payload.refreshToken) {
+            localStorage.setItem("auth:refresh", payload.refreshToken);
+          }
+
+          // retry original request with new token
+          const newToken = typeof window !== "undefined" ? localStorage.getItem("auth:jwt") : null;
+          if (newToken) headers["Authorization"] = `Bearer ${newToken}`;
+          const retryRes = await fetch(url, {
+            method,
+            headers,
+            body: data ? JSON.stringify(data) : undefined,
+            credentials: "include",
+          });
+          await throwIfResNotOk(retryRes);
+          return retryRes;
+        }
+      } catch (e) {
+        // ignore and fallthrough to original error
+        console.warn("Refresh attempt failed", e);
+      }
+    }
+  }
 
   await throwIfResNotOk(res);
   return res;

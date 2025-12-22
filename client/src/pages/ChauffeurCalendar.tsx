@@ -14,6 +14,11 @@ import {
   User,
   AlertTriangle,
   PhoneCall,
+  Plus,
+  Briefcase,
+  GraduationCap,
+  Stethoscope,
+  Coffee,
 } from "lucide-react";
 import jsPDF from "jspdf";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -23,9 +28,21 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Drawer, DrawerContent, DrawerDescription, DrawerFooter, DrawerHeader, DrawerTitle } from "@/components/ui/drawer";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { useChauffeurTrips, useUpdateTrip } from "@/hooks/useTrips";
 import { useCreateIncident } from "@/hooks/useChauffeurInsights";
+import {
+  useChauffeurCalendarData,
+  useCreateChauffeurEvent,
+  useCreateChauffeurLeave,
+  useCreateChauffeurUnavailability,
+  useCancelChauffeurLeave,
+} from "@/hooks/useChauffeurCalendar";
 import type { Trip, Reservation } from "@shared/schema";
 import { normalizeTripStatus } from "@/lib/formatters";
 import { format, parseISO } from "date-fns";
@@ -50,26 +67,15 @@ type CalendarDay = {
   note?: string;
 };
 
-const importantEvents = [
-  {
-    title: "Entretien vehicule",
-    date: "25 nov - 14:00",
-    detail: "Vidange + filtres, garage central",
-    type: "maintenance",
-  },
-  {
-    title: "Formation securite",
-    date: "27 nov - 09:00",
-    detail: "Session en ligne, module conduite defensive",
-    type: "formation",
-  },
-  {
-    title: "Conge valide",
-    date: "30 nov",
-    detail: "Journee OFF validee par le dispatch",
-    type: "conge",
-  },
-];
+// Types pour les événements dynamiques
+type EventDisplay = {
+  id: string;
+  title: string;
+  date: string;
+  detail: string;
+  type: "maintenance" | "formation" | "reunion" | "conge" | "rdv_medical" | "autre";
+  statut?: string;
+};
 
 const samplePassengers = [
   { name: "Yasmine G.", phone: "+216 22 111 222", seat: "A3", status: "Confirme", note: "Client fidele" },
@@ -234,6 +240,74 @@ export default function ChauffeurCalendar() {
   const [passengerDrawerOpen, setPassengerDrawerOpen] = useState(false);
   const [tripForPassengers, setTripForPassengers] = useState<TripPlanning | null>(null);
 
+  // Dialogs state
+  const [eventDialogOpen, setEventDialogOpen] = useState(false);
+  const [leaveDialogOpen, setLeaveDialogOpen] = useState(false);
+  const [unavailabilityDialogOpen, setUnavailabilityDialogOpen] = useState(false);
+
+  // New event/leave form state
+  const [newEvent, setNewEvent] = useState({
+    type: "reunion" as string,
+    titre: "",
+    description: "",
+    date_debut: "",
+    date_fin: "",
+    lieu: "",
+  });
+  const [newLeave, setNewLeave] = useState({
+    type: "conge_paye" as string,
+    date_debut: "",
+    date_fin: "",
+    motif: "",
+  });
+  const [newUnavailability, setNewUnavailability] = useState({
+    date_debut: "",
+    date_fin: "",
+    motif: "",
+  });
+
+  // Hooks pour les données du calendrier
+  const { events, leaves, unavailabilities, isLoading: isLoadingCalendarData } = useChauffeurCalendarData();
+  const createEvent = useCreateChauffeurEvent();
+  const createLeave = useCreateChauffeurLeave();
+  const createUnavailability = useCreateChauffeurUnavailability();
+  const cancelLeave = useCancelChauffeurLeave();
+
+  // Construire les événements importants dynamiques
+  const importantEvents = useMemo<EventDisplay[]>(() => {
+    const result: EventDisplay[] = [];
+
+    // Ajouter les événements
+    events.forEach((event) => {
+      result.push({
+        id: event.id,
+        title: event.titre,
+        date: event.date_debut ? format(new Date(event.date_debut), "dd MMM - HH:mm", { locale: fr }) : "",
+        detail: event.description || event.lieu || "",
+        type: event.type as EventDisplay["type"],
+        statut: event.statut ?? undefined,
+      });
+    });
+
+    // Ajouter les congés
+    leaves.forEach((leave) => {
+      result.push({
+        id: leave.id,
+        title: leave.type === "conge_paye" ? "Congé payé" : leave.type === "maladie" ? "Arrêt maladie" : "Congé",
+        date: leave.date_debut ? `${format(new Date(leave.date_debut), "dd MMM")} - ${format(new Date(leave.date_fin), "dd MMM")}` : "",
+        detail: leave.motif || `Statut: ${leave.statut}`,
+        type: "conge",
+        statut: leave.statut ?? undefined,
+      });
+    });
+
+    return result.sort((a, b) => {
+      const dateA = a.date ? new Date(a.date).getTime() : 0;
+      const dateB = b.date ? new Date(b.date).getTime() : 0;
+      return dateA - dateB;
+    }).slice(0, 10);
+  }, [events, leaves]);
+
   const tripPlanning = useMemo<TripPlanning[]>(() => {
     return trips.map((trip) => buildTripPlanningFromTrip(trip));
   }, [trips]);
@@ -253,8 +327,10 @@ export default function ChauffeurCalendar() {
       done: tripPlanning.filter((t) => t.status === "termine").length,
       off: calendarDays.filter((d) => d.status === "off").length,
       worked: calendarDays.filter((d) => d.status === "worked").length,
+      leavePending: leaves.filter((l) => l.statut === "en_attente").length,
+      events: events.length,
     };
-  }, [tripPlanning, calendarDays]);
+  }, [tripPlanning, calendarDays, leaves, events]);
 
   const selectedTrips = tripsByDate[selectedDate] ?? [];
   const selectedDayInfo = calendarDays.find((d) => d.date === selectedDate);
@@ -272,6 +348,75 @@ export default function ChauffeurCalendar() {
     },
     enabled: Boolean(currentTripForPassengers?.id),
   });
+
+  // Handlers pour créer des événements/congés
+  const handleCreateEvent = () => {
+    if (!newEvent.titre || !newEvent.date_debut) {
+      toast({ title: "Erreur", description: "Titre et date sont requis", variant: "destructive" });
+      return;
+    }
+    createEvent.mutate({
+      type: newEvent.type,
+      titre: newEvent.titre,
+      description: newEvent.description,
+      date_debut: new Date(newEvent.date_debut),
+      date_fin: newEvent.date_fin ? new Date(newEvent.date_fin) : null,
+      lieu: newEvent.lieu,
+    }, {
+      onSuccess: () => {
+        toast({ title: "Événement créé", description: "L'événement a été ajouté au calendrier" });
+        setEventDialogOpen(false);
+        setNewEvent({ type: "reunion", titre: "", description: "", date_debut: "", date_fin: "", lieu: "" });
+      },
+      onError: (error: any) => toast({ title: "Erreur", description: error?.message, variant: "destructive" }),
+    });
+  };
+
+  const handleCreateLeave = () => {
+    if (!newLeave.date_debut || !newLeave.date_fin) {
+      toast({ title: "Erreur", description: "Les dates sont requises", variant: "destructive" });
+      return;
+    }
+    createLeave.mutate({
+      type: newLeave.type,
+      date_debut: new Date(newLeave.date_debut),
+      date_fin: new Date(newLeave.date_fin),
+      motif: newLeave.motif,
+    }, {
+      onSuccess: () => {
+        toast({ title: "Demande envoyée", description: "Votre demande de congé est en attente de validation" });
+        setLeaveDialogOpen(false);
+        setNewLeave({ type: "conge_paye", date_debut: "", date_fin: "", motif: "" });
+      },
+      onError: (error: any) => toast({ title: "Erreur", description: error?.message, variant: "destructive" }),
+    });
+  };
+
+  const handleCreateUnavailability = () => {
+    if (!newUnavailability.date_debut || !newUnavailability.date_fin) {
+      toast({ title: "Erreur", description: "Les dates sont requises", variant: "destructive" });
+      return;
+    }
+    createUnavailability.mutate({
+      date_debut: new Date(newUnavailability.date_debut),
+      date_fin: new Date(newUnavailability.date_fin),
+      motif: newUnavailability.motif,
+    }, {
+      onSuccess: () => {
+        toast({ title: "Indisponibilité signalée", description: "Le dispatch a été informé" });
+        setUnavailabilityDialogOpen(false);
+        setNewUnavailability({ date_debut: "", date_fin: "", motif: "" });
+      },
+      onError: (error: any) => toast({ title: "Erreur", description: error?.message, variant: "destructive" }),
+    });
+  };
+
+  const handleCancelLeave = (leaveId: string) => {
+    cancelLeave.mutate(leaveId, {
+      onSuccess: () => toast({ title: "Congé annulé", description: "Votre demande de congé a été annulée" }),
+      onError: (error: any) => toast({ title: "Erreur", description: error?.message, variant: "destructive" }),
+    });
+  };
 
   const confirmTrip = (tripId: string) => {
     updateTrip.mutate(
@@ -519,10 +664,26 @@ export default function ChauffeurCalendar() {
             <Button
               className="w-full justify-start gap-2"
               variant="outline"
-              onClick={() => handleAction("Indisponibilite signalee", "Le dispatch est informe")}
+              onClick={() => setUnavailabilityDialogOpen(true)}
             >
               <CalendarX2 className="h-4 w-4" />
               Signaler une indisponibilite
+            </Button>
+            <Button
+              className="w-full justify-start gap-2"
+              variant="outline"
+              onClick={() => setLeaveDialogOpen(true)}
+            >
+              <Coffee className="h-4 w-4" />
+              Demander un conge
+            </Button>
+            <Button
+              className="w-full justify-start gap-2"
+              variant="outline"
+              onClick={() => setEventDialogOpen(true)}
+            >
+              <Plus className="h-4 w-4" />
+              Ajouter un evenement
             </Button>
             <Button
               className="w-full justify-start gap-2"
@@ -700,46 +861,105 @@ export default function ChauffeurCalendar() {
 
       <div className="grid gap-4 lg:grid-cols-3">
         <Card className="lg:col-span-2">
-          <CardHeader>
-            <CardTitle>Evenements importants</CardTitle>
+          <CardHeader className="flex flex-row items-center justify-between">
+            <CardTitle>Événements importants</CardTitle>
+            <Button size="sm" variant="outline" onClick={() => setEventDialogOpen(true)}>
+              <Plus className="h-4 w-4 mr-1" />
+              Ajouter
+            </Button>
           </CardHeader>
           <CardContent className="space-y-3">
-            {importantEvents.map((event) => (
-              <div key={event.title} className="flex items-start gap-3 rounded-lg border bg-muted/40 p-3">
-                <div className="mt-0.5">
-                  {event.type === "maintenance" && <CalendarCheck className="h-4 w-4 text-primary" />}
-                  {event.type === "formation" && <User className="h-4 w-4 text-primary" />}
-                  {event.type === "conge" && <CalendarX2 className="h-4 w-4 text-primary" />}
-                </div>
-                <div className="space-y-1">
-                  <p className="font-semibold">{event.title}</p>
-                  <p className="text-sm text-muted-foreground">{event.detail}</p>
-                  <p className="text-xs text-muted-foreground">{event.date}</p>
-                </div>
+            {isLoadingCalendarData ? (
+              <div className="space-y-3">
+                <Skeleton className="h-16 w-full" />
+                <Skeleton className="h-16 w-full" />
               </div>
-            ))}
+            ) : importantEvents.length === 0 ? (
+              <div className="text-center py-6 text-muted-foreground">
+                <CalendarClock className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                <p>Aucun événement à venir</p>
+                <p className="text-sm">Cliquez sur "Ajouter" pour créer un événement</p>
+              </div>
+            ) : (
+              importantEvents.map((event) => (
+                <div key={event.id} className="flex items-start gap-3 rounded-lg border bg-muted/40 p-3">
+                  <div className="mt-0.5">
+                    {event.type === "maintenance" && <CalendarCheck className="h-5 w-5 text-orange-500" />}
+                    {event.type === "formation" && <GraduationCap className="h-5 w-5 text-blue-500" />}
+                    {event.type === "reunion" && <Briefcase className="h-5 w-5 text-purple-500" />}
+                    {event.type === "rdv_medical" && <Stethoscope className="h-5 w-5 text-red-500" />}
+                    {event.type === "conge" && <CalendarX2 className="h-5 w-5 text-emerald-500" />}
+                    {event.type === "autre" && <Coffee className="h-5 w-5 text-gray-500" />}
+                  </div>
+                  <div className="flex-1 space-y-1">
+                    <div className="flex items-center justify-between">
+                      <p className="font-semibold">{event.title}</p>
+                      {event.statut && (
+                        <Badge variant={
+                          event.statut === "approuve" ? "default" :
+                          event.statut === "en_attente" ? "secondary" :
+                          event.statut === "refuse" ? "destructive" : "outline"
+                        } className="text-xs">
+                          {event.statut === "approuve" ? "Approuvé" :
+                           event.statut === "en_attente" ? "En attente" :
+                           event.statut === "refuse" ? "Refusé" :
+                           event.statut === "annule" ? "Annulé" : event.statut}
+                        </Badge>
+                      )}
+                    </div>
+                    <p className="text-sm text-muted-foreground">{event.detail}</p>
+                    <p className="text-xs text-muted-foreground">{event.date}</p>
+                  </div>
+                </div>
+              ))
+            )}
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader>
-            <CardTitle>Rappels</CardTitle>
+            <CardTitle>Rappels & congés</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
+            {/* Congés en attente */}
+            {leaves.filter(l => l.statut === "en_attente").length > 0 && (
+              <div className="rounded-lg border border-yellow-300 bg-yellow-50 dark:bg-yellow-900/20 dark:border-yellow-800 p-3 space-y-2">
+                <p className="font-semibold text-yellow-700 dark:text-yellow-400 flex items-center gap-2">
+                  <AlertTriangle className="h-4 w-4" />
+                  Congés en attente ({leaves.filter(l => l.statut === "en_attente").length})
+                </p>
+                {leaves.filter(l => l.statut === "en_attente").slice(0, 2).map(leave => (
+                  <div key={leave.id} className="flex items-center justify-between text-sm">
+                    <span>
+                      {format(new Date(leave.date_debut), "dd/MM")} - {format(new Date(leave.date_fin), "dd/MM")}
+                    </span>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-6 px-2 text-xs text-destructive"
+                      onClick={() => handleCancelLeave(leave.id)}
+                    >
+                      Annuler
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
+
             <ReminderItem
               icon={<CalendarCheck className="h-4 w-4 text-primary" />}
               title="Valider les trajets du jour"
-              content="Confirmez ou signalez vos disponibilites."
+              content="Confirmez ou signalez vos disponibilités."
             />
             <ReminderItem
               icon={<FileDown className="h-4 w-4 text-primary" />}
-              title="Telecharger les ordres de mission"
-              content="A conserver dans le vehicule et sur mobile."
+              title="Télécharger les ordres de mission"
+              content="À conserver dans le véhicule et sur mobile."
             />
             <ReminderItem
               icon={<Navigation className="h-4 w-4 text-primary" />}
               title="Points de prise en charge"
-              content="Verifier les adresses et le trafic 30 min avant."
+              content="Vérifier les adresses et le trafic 30 min avant."
             />
           </CardContent>
         </Card>
@@ -800,6 +1020,232 @@ export default function ChauffeurCalendar() {
           </DrawerFooter>
         </DrawerContent>
       </Drawer>
+
+      {/* Dialog: Créer un événement */}
+      <Dialog open={eventDialogOpen} onOpenChange={setEventDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Nouvel événement</DialogTitle>
+            <DialogDescription>
+              Ajoutez un événement personnel à votre calendrier (réunion, formation, RDV médical, etc.)
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid gap-2">
+              <Label htmlFor="event-type">Type d'événement</Label>
+              <Select value={newEvent.type} onValueChange={(v) => setNewEvent({ ...newEvent, type: v })}>
+                <SelectTrigger id="event-type">
+                  <SelectValue placeholder="Sélectionner un type" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="reunion">
+                    <div className="flex items-center gap-2">
+                      <Briefcase className="h-4 w-4" />
+                      <span>Réunion</span>
+                    </div>
+                  </SelectItem>
+                  <SelectItem value="formation">
+                    <div className="flex items-center gap-2">
+                      <GraduationCap className="h-4 w-4" />
+                      <span>Formation</span>
+                    </div>
+                  </SelectItem>
+                  <SelectItem value="rdv_medical">
+                    <div className="flex items-center gap-2">
+                      <Stethoscope className="h-4 w-4" />
+                      <span>RDV médical</span>
+                    </div>
+                  </SelectItem>
+                  <SelectItem value="maintenance">
+                    <div className="flex items-center gap-2">
+                      <CalendarCheck className="h-4 w-4" />
+                      <span>Maintenance véhicule</span>
+                    </div>
+                  </SelectItem>
+                  <SelectItem value="autre">
+                    <div className="flex items-center gap-2">
+                      <Coffee className="h-4 w-4" />
+                      <span>Autre</span>
+                    </div>
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="event-title">Titre *</Label>
+              <Input
+                id="event-title"
+                placeholder="Ex: Réunion équipe transport"
+                value={newEvent.titre}
+                onChange={(e) => setNewEvent({ ...newEvent, titre: e.target.value })}
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="event-desc">Description</Label>
+              <Textarea
+                id="event-desc"
+                placeholder="Détails de l'événement..."
+                value={newEvent.description}
+                onChange={(e) => setNewEvent({ ...newEvent, description: e.target.value })}
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="grid gap-2">
+                <Label htmlFor="event-start">Date/heure début *</Label>
+                <Input
+                  id="event-start"
+                  type="datetime-local"
+                  value={newEvent.date_debut}
+                  onChange={(e) => setNewEvent({ ...newEvent, date_debut: e.target.value })}
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="event-end">Date/heure fin</Label>
+                <Input
+                  id="event-end"
+                  type="datetime-local"
+                  value={newEvent.date_fin}
+                  onChange={(e) => setNewEvent({ ...newEvent, date_fin: e.target.value })}
+                />
+              </div>
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="event-location">Lieu</Label>
+              <Input
+                id="event-location"
+                placeholder="Ex: Bureau principal, Garage, etc."
+                value={newEvent.lieu}
+                onChange={(e) => setNewEvent({ ...newEvent, lieu: e.target.value })}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEventDialogOpen(false)}>
+              Annuler
+            </Button>
+            <Button onClick={handleCreateEvent} disabled={createEvent.isPending}>
+              {createEvent.isPending ? "Création..." : "Créer l'événement"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Dialog: Demander un congé */}
+      <Dialog open={leaveDialogOpen} onOpenChange={setLeaveDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Demande de congé</DialogTitle>
+            <DialogDescription>
+              Soumettez une demande de congé. Elle sera validée par l'administrateur.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid gap-2">
+              <Label htmlFor="leave-type">Type de congé</Label>
+              <Select value={newLeave.type} onValueChange={(v) => setNewLeave({ ...newLeave, type: v })}>
+                <SelectTrigger id="leave-type">
+                  <SelectValue placeholder="Sélectionner un type" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="conge_paye">Congé payé</SelectItem>
+                  <SelectItem value="conge_sans_solde">Congé sans solde</SelectItem>
+                  <SelectItem value="maladie">Arrêt maladie</SelectItem>
+                  <SelectItem value="exceptionnel">Congé exceptionnel</SelectItem>
+                  <SelectItem value="autre">Autre</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="grid gap-2">
+                <Label htmlFor="leave-start">Date de début *</Label>
+                <Input
+                  id="leave-start"
+                  type="date"
+                  value={newLeave.date_debut}
+                  onChange={(e) => setNewLeave({ ...newLeave, date_debut: e.target.value })}
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="leave-end">Date de fin *</Label>
+                <Input
+                  id="leave-end"
+                  type="date"
+                  value={newLeave.date_fin}
+                  onChange={(e) => setNewLeave({ ...newLeave, date_fin: e.target.value })}
+                />
+              </div>
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="leave-reason">Motif</Label>
+              <Textarea
+                id="leave-reason"
+                placeholder="Raison de votre demande..."
+                value={newLeave.motif}
+                onChange={(e) => setNewLeave({ ...newLeave, motif: e.target.value })}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setLeaveDialogOpen(false)}>
+              Annuler
+            </Button>
+            <Button onClick={handleCreateLeave} disabled={createLeave.isPending}>
+              {createLeave.isPending ? "Envoi..." : "Soumettre la demande"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Dialog: Signaler une indisponibilité */}
+      <Dialog open={unavailabilityDialogOpen} onOpenChange={setUnavailabilityDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Signaler une indisponibilité</DialogTitle>
+            <DialogDescription>
+              Indiquez une période où vous ne serez pas disponible pour des missions.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="grid gap-2">
+                <Label htmlFor="unavail-start">Date/heure début *</Label>
+                <Input
+                  id="unavail-start"
+                  type="datetime-local"
+                  value={newUnavailability.date_debut}
+                  onChange={(e) => setNewUnavailability({ ...newUnavailability, date_debut: e.target.value })}
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="unavail-end">Date/heure fin *</Label>
+                <Input
+                  id="unavail-end"
+                  type="datetime-local"
+                  value={newUnavailability.date_fin}
+                  onChange={(e) => setNewUnavailability({ ...newUnavailability, date_fin: e.target.value })}
+                />
+              </div>
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="unavail-reason">Motif</Label>
+              <Textarea
+                id="unavail-reason"
+                placeholder="Raison de l'indisponibilité (optionnel)..."
+                value={newUnavailability.motif}
+                onChange={(e) => setNewUnavailability({ ...newUnavailability, motif: e.target.value })}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setUnavailabilityDialogOpen(false)}>
+              Annuler
+            </Button>
+            <Button onClick={handleCreateUnavailability} disabled={createUnavailability.isPending}>
+              {createUnavailability.isPending ? "Envoi..." : "Signaler"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

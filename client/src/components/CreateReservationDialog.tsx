@@ -42,6 +42,20 @@ export function CreateReservationDialog({
   const prix = trip?.prix ? Number(trip.prix) : 0;
   const montantTotal = prix * (parseInt(nombrePlaces || "1") || 1);
 
+  const openQrPreview = async (reservation: any) => {
+    try {
+      const qrText = reservation?.qr?.text ?? JSON.stringify({ reservationId: reservation.id });
+      const payload = reservation?.qr?.payload;
+      const dataUrl = await QRCode.toDataURL(qrText);
+      const html = `<!doctype html><html><head><meta charset="utf-8"><title>Ticket QR</title></head><body style="display:flex;align-items:center;justify-content:center;height:100vh;margin:0"><div style="text-align:center;font-family:Arial,sans-serif;"><img src='${dataUrl}' alt='QR code' style="max-width:320px" /><p>Réservation: ${payload?.reservation_id ?? reservation.id}</p>${payload ? `<p style="margin:6px 0;color:#555;">Date: ${payload.date} ${payload.time}</p><p style="margin:0;color:#555;">Bus: ${payload.bus_id ?? "Non assigné"}</p><p style="margin:6px 0;color:#555;">Siège: ${payload.seat_number ?? "Libre"}</p>` : ""}<p style="color:#777;">Présentez ce QR à l'embarquement.</p></div></body></html>`;
+      const blob = new Blob([html], { type: "text/html" });
+      const url = URL.createObjectURL(blob);
+      window.open(url, "_blank");
+    } catch {
+      // ignore QR errors
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -79,17 +93,7 @@ export function CreateReservationDialog({
           });
           setNombrePlaces("1");
           onOpenChange(false);
-
-          try {
-            const qrText = reservation?.qr?.text ?? JSON.stringify({ reservationId: reservation.id });
-            const dataUrl = await QRCode.toDataURL(qrText);
-            const html = `<!doctype html><html><head><meta charset="utf-8"><title>Ticket QR</title></head><body style="display:flex;align-items:center;justify-content:center;height:100vh;margin:0"><div style="text-align:center"><img src='${dataUrl}' alt='QR code' /><p>Réservation: ${reservation.id}</p></div></body></html>`;
-            const blob = new Blob([html], { type: "text/html" });
-            const url = URL.createObjectURL(blob);
-            window.open(url, "_blank");
-          } catch {
-            // ignore QR errors
-          }
+          await openQrPreview(reservation);
         },
         onError: (error: any) => {
           toast({
@@ -126,16 +130,7 @@ export function CreateReservationDialog({
           toast({ title: "Succès", description: "Réservation créée" });
           setNombrePlaces("1");
           onOpenChange(false);
-          try {
-            const qrText = reservation?.qr?.text ?? JSON.stringify({ reservationId: reservation.id });
-            const dataUrl = await QRCode.toDataURL(qrText);
-            const html = `<!doctype html><html><head><meta charset="utf-8"><title>Ticket QR</title></head><body style="display:flex;align-items:center;justify-content:center;height:100vh;margin:0"><div style="text-align:center"><img src='${dataUrl}' alt='QR code' /><p>Réservation: ${reservation.id}</p></div></body></html>`;
-            const blob = new Blob([html], { type: "text/html" });
-            const url = URL.createObjectURL(blob);
-            window.open(url, "_blank");
-          } catch {
-            // ignore QR errors
-          }
+          await openQrPreview(reservation);
         },
         onError: (error: any) => {
           toast({

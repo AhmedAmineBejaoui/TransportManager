@@ -23,8 +23,20 @@ export function useAuth() {
       return await res.json();
     },
     onSuccess: (data) => {
-      queryClient.setQueryData(["/api/auth/me"], data);
-      const normalizedRole = getClientRole(data.role);
+      const user = data?.user ?? data;
+      queryClient.setQueryData(["/api/auth/me"], user);
+      // Persist JWT + refresh token for API clients (mobile)
+      try {
+        if (data?.jwt) {
+          localStorage.setItem("auth:jwt", data.jwt);
+        }
+        if (data?.refreshToken) {
+          localStorage.setItem("auth:refresh", data.refreshToken);
+        }
+      } catch (e) {
+        // ignore storage errors in non-browser environments
+      }
+      const normalizedRole = getClientRole(user?.role);
       if (normalizedRole === "ADMIN") {
         setLocation("/admin");
       } else if (normalizedRole === "CHAUFFEUR") {
@@ -58,6 +70,13 @@ export function useAuth() {
       return await res.json();
     },
     onSuccess: () => {
+      // clear any stored tokens
+      try {
+        localStorage.removeItem("auth:jwt");
+        localStorage.removeItem("auth:refresh");
+      } catch (e) {
+        // ignore
+      }
       queryClient.setQueryData(["/api/auth/me"], null);
       setLocation("/login");
     },

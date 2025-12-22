@@ -17,6 +17,7 @@ type TicketModalState = {
 export function TicketModal() {
   const [state, setState] = useState<TicketModalState>({ open: false });
   const [dataUrl, setDataUrl] = useState<string | null>(null);
+  const [payload, setPayload] = useState<Record<string, any> | null>(null);
 
   useEffect(() => {
     function handle(e: any) {
@@ -26,6 +27,14 @@ export function TicketModal() {
     window.addEventListener("open-ticket-modal", handle as EventListener);
     return () => window.removeEventListener("open-ticket-modal", handle as EventListener);
   }, []);
+
+  useEffect(() => {
+    try {
+      setPayload(state.qrText ? JSON.parse(state.qrText) : null);
+    } catch {
+      setPayload(null);
+    }
+  }, [state.qrText]);
 
   useEffect(() => {
     let mounted = true;
@@ -95,6 +104,19 @@ export function TicketModal() {
             <img src={dataUrl} alt="QR code ticket" className="w-64 h-64 object-contain" />
           ) : (
             <div className="h-64 w-64 flex items-center justify-center bg-muted">Génération du QR…</div>
+          )}
+          {payload && (
+            <div className="w-full rounded-md bg-muted/50 p-3 text-sm text-muted-foreground space-y-2">
+              <div className="grid grid-cols-2 gap-2">
+                <span>Date : <span className="font-semibold text-foreground">{payload.date ?? "N/A"}</span></span>
+                <span>Heure : <span className="font-semibold text-foreground">{payload.time ?? "N/A"}</span></span>
+                <span>Bus : <span className="font-semibold text-foreground">{payload.bus_id ?? "Non assigné"}</span></span>
+                <span>Siège : <span className="font-semibold text-foreground">{payload.seat_number ?? "Libre"}</span></span>
+              </div>
+              {payload.reservation_id && (
+                <div>Signature : <span className="break-all">{String(payload.signature ?? "").slice(0, 24)}...</span></div>
+              )}
+            </div>
           )}
           <div className="flex gap-2">
             <Button onClick={handleDownload} disabled={!dataUrl}>Télécharger PNG</Button>

@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- Autoriser le trafic HTTP (cleartext) pour le développement -->
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="user" />
+        </trust-anchors>
+    </base-config>
+    
+    <!-- Configuration pour HTTPS avec certificat auto-signé -->
+    <domain-config>
+        <domain includeSubdomains="true">192.168.1.13</domain>
+        <domain includeSubdomains="true">localhost</domain>
+        <trust-anchors>
+            <!-- Faire confiance au certificat auto-signé -->
+            <certificates src="@raw/server_cert"/>
+            <certificates src="system" />
+            <certificates src="user" />
+        </trust-anchors>
+    </domain-config>
+    
+    <!-- Debug override pour les certificats auto-signés -->
+    <debug-overrides>
+        <trust-anchors>
+            <certificates src="@raw/server_cert"/>
+            <certificates src="user" />
+        </trust-anchors>
+    </debug-overrides>
+</network-security-config>

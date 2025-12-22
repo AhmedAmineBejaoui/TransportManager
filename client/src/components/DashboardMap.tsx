@@ -1,27 +1,110 @@
-import { useMemo, useState, useEffect, useRef, useCallback } from "react";
+import { useMemo, useState, useEffect, useRef } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useLoadScript, GoogleMap, Circle, Marker, Polyline } from "@react-google-maps/api";
+import { MapContainer, TileLayer, Polyline, Circle, CircleMarker, useMap } from "react-leaflet";
 import { Navigation, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useGeolocation } from "@/hooks/useGeolocation";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import type { Trip } from "@shared/schema";
+import L from "leaflet";
 
-const mapContainerStyle: google.maps.MapOptions["styles"] = [
-  {
-    featureType: "road.highway",
-    elementType: "geometry",
-    stylers: [{ color: "#3476e6" }],
-  },
-];
+type LatLng = { lat: number; lng: number };
 
 interface DashboardMapProps {
   height?: string;
   origin?: string;
   destination?: string;
+  trips?: Trip[];
+  activeTripId?: string;
 }
 
-export function DashboardMap({ height = "h-[500px]", origin, destination }: DashboardMapProps) {
+type TripRoute = {
+  id: string;
+  label: string;
+  path: LatLng[];
+  start?: LatLng;
+  end?: LatLng;
+  distanceKm?: number;
+};
+
+const tileUrl = "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png";
+const tileAttribution = "© OpenStreetMap contributors";
+
+const defaultCenter: LatLng = { lat: 34, lng: 9 };
+
+function FitBounds({ paths, user }: { paths: LatLng[][]; user?: LatLng }) {
+  const map = useMap();
+
+  useEffect(() => {
+    const allPoints = paths.flat().filter(Boolean) as LatLng[];
+    if (user) allPoints.push(user);
+    if (allPoints.length === 0) return;
+
+    const bounds = allPoints.reduce(
+      (acc, point) => acc.extend([point.lat, point.lng]),
+      new L.LatLngBounds([allPoints[0].lat, allPoints[0].lng], [allPoints[0].lat, allPoints[0].lng]),
+    );
+    map.fitBounds(bounds, { padding: [48, 48] });
+  }, [paths, user, map]);
+
+  return null;
+}
+
+async function geocodeLabel(label: string, cache: Map<string, LatLng>): Promise<LatLng | null> {
+  if (cache.has(label)) return cache.get(label)!;
+
+  const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(label)}`;
+  const res = await fetch(url, {
+    headers: {
+      "User-Agent": "transport-manager-app/1.0",
+      Accept: "application/json",
+    },
+  });
+  if (!res.ok) return null;
+  const data = await res.json();
+  const hit = data?.[0];
+  if (!hit) return null;
+  const coords = { lat: parseFloat(hit.lat), lng: parseFloat(hit.lon) };
+  cache.set(label, coords);
+  return coords;
+}
+
+async function fetchOsrmRoute(start: LatLng, end: LatLng): Promise<{ path: LatLng[]; distanceKm?: number }> {
+  const url = `https://router.project-osrm.org/route/v1/driving/${start.lng},${start.lat};${end.lng},${end.lat}?overview=full&geometries=geojson`;
+  const res = await fetch(url);
+  if (!res.ok) return { path: [start, end] };
+  const data = await res.json();
+  const coords: [number, number][] = data?.routes?.[0]?.geometry?.coordinates ?? [];
+  const distanceMeters: number | undefined = data?.routes?.[0]?.distance;
+  const distanceKm = typeof distanceMeters === "number" ? Math.round((distanceMeters / 1000) * 10) / 10 : undefined;
+  if (!coords.length) return { path: [start, end], distanceKm };
+  return {
+    path: coords.map(([lng, lat]) => ({ lat, lng })),
+    distanceKm,
+  };
+}
+
+async function buildRouteFromLabels(
+  id: string,
+  from: string,
+  to: string,
+  cache: Map<string, LatLng>,
+): Promise<TripRoute | null> {
+  const [start, end] = await Promise.all([geocodeLabel(from, cache), geocodeLabel(to, cache)]);
+  if (!start || !end) return null;
+  const { path, distanceKm } = await fetchOsrmRoute(start, end);
+  return {
+    id,
+    label: `${from} → ${to}`,
+    path,
+    start,
+    end,
+    distanceKm,
+  };
+}
+
+export function DashboardMap({ height = "h-[500px]", origin, destination, trips, activeTripId }: DashboardMapProps) {
   const {
     coords: userCoords,
     error: geoError,
@@ -32,25 +115,17 @@ export function DashboardMap({ height = "h-[500px]", origin, destination }: Dash
   } = useGeolocation(true, true);
 
   const [enableTracking, setEnableTracking] = useState(true);
-  const [mapCenter, setMapCenter] = useState<{ lat: number; lng: number }>({ lat: 34, lng: 9 });
-  const [routePath, setRoutePath] = useState<google.maps.LatLngLiteral[]>([]);
+  const [mapCenter, setMapCenter] = useState<LatLng>(defaultCenter);
+  const [routePath, setRoutePath] = useState<LatLng[]>([]);
   const [routeDistance, setRouteDistance] = useState<string | null>(null);
-  const [routeMarkers, setRouteMarkers] = useState<{
-    origin?: google.maps.LatLngLiteral;
-    destination?: google.maps.LatLngLiteral;
-  }>({});
+  const [routeMarkers, setRouteMarkers] = useState<{ origin?: LatLng; destination?: LatLng }>({});
   const [routeLoading, setRouteLoading] = useState(false);
   const [routeError, setRouteError] = useState<string | null>(null);
-  const mapRef = useRef<google.maps.Map | null>(null);
-
-  const googleMapsApiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
-  const { isLoaded, loadError } = useLoadScript({
-    googleMapsApiKey: googleMapsApiKey || "",
-  });
+  const [tripRoutes, setTripRoutes] = useState<TripRoute[]>([]);
+  const [tripRoutesLoading, setTripRoutesLoading] = useState(false);
+  const geocodeCacheRef = useRef<Map<string, LatLng>>(new Map());
 
   const center = useMemo(() => mapCenter, [mapCenter]);
-  const mapError = loadError?.message ?? "";
-  const billingNotEnabled = mapError.includes("BillingNotEnabled");
 
   useEffect(() => {
     if (userCoords && routePath.length === 0) {
@@ -64,18 +139,13 @@ export function DashboardMap({ height = "h-[500px]", origin, destination }: Dash
   useEffect(() => {
     if (enableTracking) {
       startWatching();
-    } else {
+    } else if (isWatching) {
       stopWatching();
     }
-  }, [enableTracking, startWatching, stopWatching]);
+  }, [enableTracking, isWatching, startWatching, stopWatching]);
 
-  const handleMapLoad = useCallback((map: google.maps.Map) => {
-    mapRef.current = map;
-  }, []);
-
+  // Build route from search
   useEffect(() => {
-    if (!isLoaded) return;
-
     if (!origin || !destination) {
       setRoutePath([]);
       setRouteDistance(null);
@@ -84,112 +154,91 @@ export function DashboardMap({ height = "h-[500px]", origin, destination }: Dash
       return;
     }
 
-    let active = true;
-    const service = new google.maps.DirectionsService();
+    let cancelled = false;
     setRouteLoading(true);
     setRouteError(null);
 
-    service.route(
-      {
-        origin,
-        destination,
-        travelMode: google.maps.TravelMode.DRIVING,
-      },
-      (result, status) => {
-        if (!active) return;
-
-        if (status === google.maps.DirectionsStatus.OK && result) {
-          const route = result.routes?.[0];
-          const leg = route?.legs?.[0];
-          const overviewPath = route?.overview_path ?? [];
-          const path = overviewPath.map((point) => ({ lat: point.lat(), lng: point.lng() }));
-
-          setRoutePath(path);
-          setRouteDistance(leg?.distance?.text ?? null);
-          setRouteMarkers({
-            origin: leg?.start_location
-              ? { lat: leg.start_location.lat(), lng: leg.start_location.lng() }
-              : undefined,
-            destination: leg?.end_location
-              ? { lat: leg.end_location.lat(), lng: leg.end_location.lng() }
-              : undefined,
-          });
-
-          if (path.length > 0) {
-            setMapCenter(path[Math.floor(path.length / 2)]);
-          } else if (leg?.start_location) {
-            setMapCenter({ lat: leg.start_location.lat(), lng: leg.start_location.lng() });
-          }
-
-          if (mapRef.current && path.length > 0) {
-            const bounds = new google.maps.LatLngBounds();
-            path.forEach((point) => bounds.extend(point));
-            mapRef.current.fitBounds(bounds, 48);
-          } else if (leg?.start_location && leg?.end_location && mapRef.current) {
-            const bounds = new google.maps.LatLngBounds();
-            bounds.extend(leg.start_location);
-            bounds.extend(leg.end_location);
-            mapRef.current.fitBounds(bounds, 48);
-          }
-        } else {
-          const statusLabel =
-            status === google.maps.DirectionsStatus.REQUEST_DENIED
-              ? "Clé Google Maps invalide ou facturation désactivée."
-              : status === google.maps.DirectionsStatus.ZERO_RESULTS
-                ? "Aucun itinéraire trouvé entre ces points."
-                : status === google.maps.DirectionsStatus.NOT_FOUND
-                  ? "Adresses introuvables pour l'itinéraire."
-                  : "Impossible de calculer l'itinéraire. Verifiez les adresses.";
-          setRouteError(statusLabel);
+    buildRouteFromLabels("user-route", origin, destination, geocodeCacheRef.current)
+      .then((route) => {
+        if (cancelled) return;
+        if (!route) {
+          setRouteError("Impossible de tracer cet itineraire (geocodage)");
           setRoutePath([]);
-          setRouteDistance(null);
           setRouteMarkers({});
+          setRouteDistance(null);
+          return;
         }
-
-        setRouteLoading(false);
-      },
-    );
+        setRoutePath(route.path);
+        setRouteMarkers({ origin: route.start, destination: route.end });
+        setRouteDistance(route.distanceKm ? `${route.distanceKm} km` : null);
+        if (route.path.length > 0) {
+          setMapCenter(route.path[Math.floor(route.path.length / 2)]);
+        } else if (route.start) {
+          setMapCenter(route.start);
+        }
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setRouteError("Erreur lors du calcul de l'itineraire.");
+        setRoutePath([]);
+        setRouteMarkers({});
+        setRouteDistance(null);
+      })
+      .finally(() => {
+        if (!cancelled) setRouteLoading(false);
+      });
 
     return () => {
-      active = false;
+      cancelled = true;
     };
-  }, [origin, destination, isLoaded]);
+  }, [origin, destination]);
 
-  if (!googleMapsApiKey || billingNotEnabled) {
-    return (
-      <Card>
-        <CardHeader>
-          <CardTitle>Ma position</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-2 text-sm text-muted-foreground">
-          <p>Pour afficher la carte :</p>
-          <ol className="list-decimal list-inside space-y-1">
-            <li>Creer une cle Google Maps (console.cloud.google.com).</li>
-            <li>Activez la facturation sur ce projet (exigence Google).</li>
-            <li>Mettez la cle dans <code>client/.env.local - VITE_GOOGLE_MAPS_API_KEY</code>.</li>
-          </ol>
-          {billingNotEnabled && (
-            <p className="text-red-500">Erreur actuelle : la facturation n'est pas activee sur votre cle.</p>
-          )}
-        </CardContent>
-      </Card>
-    );
-  }
+  // Build routes from admin trips
+  useEffect(() => {
+    if (!trips || trips.length === 0) {
+      setTripRoutes([]);
+      setTripRoutesLoading(false);
+      return;
+    }
 
-  if (loadError && !billingNotEnabled) {
-    return (
-      <Card>
-        <CardHeader>
-          <CardTitle>Ma position</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <p className="text-sm text-muted-foreground">
-            Impossible de charger Google Maps ({loadError.message}). Verifiez votre cle.
-          </p>
-        </CardContent>
-      </Card>
-    );
-  }
+    const limitedTrips = trips.slice(0, 6);
+    let cancelled = false;
+    setTripRoutesLoading(true);
+
+    Promise.all(
+      limitedTrips.map((trip) => {
+        const from = trip.point_depart || trip.start_location;
+        const to = trip.point_arrivee || trip.end_location;
+        if (!from || !to) return Promise.resolve(null);
+        return buildRouteFromLabels(trip.id, from, to, geocodeCacheRef.current);
+      }),
+    )
+      .then((routes) => {
+        if (cancelled) return;
+        const filtered = routes.filter(Boolean) as TripRoute[];
+        setTripRoutes(filtered);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setTripRoutes([]);
+      })
+      .finally(() => {
+        if (!cancelled) setTripRoutesLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [trips]);
+
+  const allPaths = useMemo(() => {
+    const combined: LatLng[][] = [];
+    if (routePath.length) combined.push(routePath);
+    tripRoutes.forEach((r) => {
+      if (r.path.length) combined.push(r.path);
+    });
+    return combined;
+  }, [routePath, tripRoutes]);
 
   return (
     <Card className="overflow-hidden">
@@ -206,11 +255,11 @@ export function DashboardMap({ height = "h-[500px]", origin, destination }: Dash
         </Button>
       </CardHeader>
       <CardContent className={`${height} p-0 relative`}>
-        {!isLoaded || geoLoading ? (
+        {geoLoading ? (
           <Skeleton className="h-full w-full" />
         ) : (
           <>
-            {(routeDistance || routeLoading || routeError || (origin && destination)) && (
+            {(routeDistance || routeLoading || routeError || (origin && destination) || tripRoutesLoading) && (
               <div className="absolute top-4 left-4 z-10 space-y-2 max-w-xs">
                 {routeDistance && (
                   <div className="rounded-md bg-white/90 px-3 py-2 shadow">
@@ -233,6 +282,11 @@ export function DashboardMap({ height = "h-[500px]", origin, destination }: Dash
                     {routeError}
                   </div>
                 )}
+                {tripRoutesLoading && (
+                  <div className="rounded-md bg-white/90 px-3 py-2 shadow text-sm text-muted-foreground">
+                    Synchronisation des trajets (OpenStreetMap)...
+                  </div>
+                )}
               </div>
             )}
 
@@ -251,81 +305,117 @@ export function DashboardMap({ height = "h-[500px]", origin, destination }: Dash
                 </div>
               </Alert>
             )}
-            <GoogleMap
-              mapContainerStyle={{ width: "100%", height: "100%" }}
-              zoom={userCoords ? 14 : 6}
-              center={center}
-              onLoad={handleMapLoad}
-              options={{
-                styles: mapContainerStyle,
-                disableDefaultUI: true,
-              }}
-            >
-              {userCoords && (
-                <>
-                  <Marker
-                    position={{
-                      lat: userCoords.latitude,
-                      lng: userCoords.longitude,
-                    }}
-                    options={{
-                      title: `Votre position (Precision: ${Math.round(userCoords.accuracy)}m)`,
-                      icon: {
-                        path: google.maps.SymbolPath.CIRCLE,
-                        scale: 8,
-                        fillColor: "#3b82f6",
-                        fillOpacity: 1,
-                        strokeColor: "#ffffff",
-                        strokeWeight: 2,
-                      },
-                    }}
-                  />
-                  <Circle
-                    center={{
-                      lat: userCoords.latitude,
-                      lng: userCoords.longitude,
-                    }}
-                    options={{
-                      radius: userCoords.accuracy,
-                      fillColor: "#3b82f6",
-                      fillOpacity: 0.1,
-                      strokeColor: "#3b82f6",
-                      strokeOpacity: 0.3,
-                      strokeWeight: 1,
-                    }}
-                  />
-                </>
-              )}
 
-              {routeMarkers.origin && (
-                <Marker
-                  position={routeMarkers.origin}
-                  options={{ title: "Depart" }}
-                />
-              )}
-              {routeMarkers.destination && (
-                <Marker
-                  position={routeMarkers.destination}
-                  options={{ title: "Arrivee" }}
-                />
-              )}
+            <MapContainer
+              className="h-full w-full"
+              center={[center.lat, center.lng]}
+              zoom={userCoords ? 13 : 6}
+              zoomControl={false}
+              scrollWheelZoom
+            >
+              <TileLayer url={tileUrl} attribution={tileAttribution} />
+
+              {allPaths.length > 0 && <FitBounds paths={allPaths} user={userCoords ? { lat: userCoords.latitude, lng: userCoords.longitude } : undefined} />}
+
               {routePath.length > 0 && (
                 <Polyline
-                  path={routePath}
-                  options={{
-                    strokeColor: "#2563eb",
-                    strokeOpacity: 0.9,
-                    strokeWeight: 4,
+                  positions={routePath.map((p) => [p.lat, p.lng] as [number, number])}
+                  pathOptions={{
+                    color: "#2563eb",
+                    weight: 5,
+                    opacity: 0.9,
                   }}
                 />
               )}
-            </GoogleMap>
+
+              {tripRoutes.filter((route) => route.path.length > 0).map((route) => (
+                <Polyline
+                  key={route.id}
+                  positions={route.path.map((p) => [p.lat, p.lng] as [number, number])}
+                  pathOptions={{
+                    color: activeTripId === route.id ? "#38bdf8" : "#0ea5e9",
+                    weight: activeTripId === route.id ? 6 : 4,
+                    opacity: activeTripId === route.id ? 1 : 0.85,
+                  }}
+                />
+              ))}
+
+              {tripRoutes.map((route) => {
+                const startPoint = route.start ?? route.path[0];
+                if (!startPoint) return null;
+                return (
+                  <CircleMarker
+                    key={`${route.id}-start`}
+                    center={[startPoint.lat, startPoint.lng]}
+                    pathOptions={{ color: "#0ea5e9", fillColor: "#0ea5e9" }}
+                    radius={7}
+                  />
+                );
+              })}
+              {tripRoutes.map((route) => {
+                const endPoint = route.end ?? (route.path.length ? route.path[route.path.length - 1] : undefined);
+                if (!endPoint) return null;
+                return (
+                  <CircleMarker
+                    key={`${route.id}-end`}
+                    center={[endPoint.lat, endPoint.lng]}
+                    pathOptions={{ color: "#0ea5e9", fillColor: "#0ea5e9" }}
+                    radius={7}
+                  />
+                );
+              })}
+
+              {routeMarkers.origin && (
+                <CircleMarker
+                  center={[routeMarkers.origin.lat, routeMarkers.origin.lng]}
+                  pathOptions={{ color: "#2563eb", fillColor: "#2563eb" }}
+                  radius={8}
+                />
+              )}
+              {routeMarkers.destination && (
+                <CircleMarker
+                  center={[routeMarkers.destination.lat, routeMarkers.destination.lng]}
+                  pathOptions={{ color: "#2563eb", fillColor: "#2563eb" }}
+                  radius={8}
+                />
+              )}
+
+              {userCoords && (
+                <>
+                  <CircleMarker
+                    center={[userCoords.latitude, userCoords.longitude]}
+                    pathOptions={{ color: "#3b82f6", fillColor: "#3b82f6" }}
+                    radius={8}
+                  />
+                  <Circle
+                    center={[userCoords.latitude, userCoords.longitude]}
+                    pathOptions={{
+                      color: "#3b82f6",
+                      fillColor: "#3b82f6",
+                      weight: 1,
+                      opacity: 0.3,
+                      fillOpacity: 0.08,
+                    }}
+                    radius={userCoords.accuracy}
+                  />
+                </>
+              )}
+            </MapContainer>
+
             {enableTracking && userCoords && (
               <Alert className="absolute bottom-4 left-4 right-4 bg-blue-50 border-blue-200 max-w-xs z-10">
                 <Navigation className="h-4 w-4 text-blue-600" />
                 <AlertDescription className="text-sm text-blue-800">
                   Precision: {Math.round(userCoords.accuracy)}m
                   {userCoords.speed !== undefined && ` - Vitesse: ${Math.round(userCoords.speed * 3.6)} km/h`}
+                </AlertDescription>
+              </Alert>
+            )}
+
+            {tripRoutes.length > 0 && (
+              <Alert className="absolute bottom-4 right-4 bg-white/90 border-white/70 max-w-xs z-10">
+                <AlertDescription className="text-sm text-slate-800">
+                  {tripRoutes.length} trajets admin affiches sur la carte (OSM/Leaflet). Selectionnez un trajet pour reserver.
                 </AlertDescription>
               </Alert>
             )}

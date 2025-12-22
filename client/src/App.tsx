@@ -30,7 +30,8 @@ import ChauffeurCalendar from "@/pages/ChauffeurCalendar";
 import ChauffeurVehicle from "@/pages/ChauffeurVehicle";
 import NotFound from "@/pages/not-found";
 import QuickReserve from "@/pages/QuickReserve";
-import AdminScanner from "@/pages/AdminScanner";
+import ChauffeurScanner from "@/pages/ChauffeurScanner";
+import ForgotPassword from "@/pages/ForgotPassword";
 
 function AuthenticatedLayout({ children, userRole, userName }: { children: React.ReactNode; userRole: "ADMIN" | "CHAUFFEUR" | "CLIENT"; userName: string }) {
   const style = {
@@ -43,33 +44,33 @@ function AuthenticatedLayout({ children, userRole, userName }: { children: React
       <div className="relative flex min-h-screen w-full bg-background text-foreground overflow-hidden font-sans selection:bg-primary/20 selection:text-primary">
         {/* Dynamic Background */}
         <div className="fixed inset-0 z-0 pointer-events-none">
-          <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-primary/10 via-background to-background" />
+          <div className="absolute inset-0 bg-[#030914] bg-[radial-gradient(120%_80%_at_50%_0%,rgba(18,216,255,0.18),transparent),radial-gradient(110%_70%_at_82%_18%,rgba(16,114,255,0.14),transparent),radial-gradient(120%_80%_at_18%_82%,rgba(0,255,200,0.1),transparent)]" />
           <motion.div
-            className="absolute -left-[10%] -top-[10%] h-[50vh] w-[50vw] rounded-full bg-primary/20 blur-[120px] opacity-50 mix-blend-multiply dark:mix-blend-screen"
-            animate={{ 
-              x: [0, 50, -30, 0], 
-              y: [0, -40, 20, 0],
-              scale: [1, 1.1, 0.9, 1]
+            className="absolute -left-[8%] -top-[14%] h-[52vh] w-[52vw] rounded-full bg-[rgba(0,255,200,0.12)] blur-[140px] opacity-60 mix-blend-screen"
+            animate={{
+              x: [0, 48, -26, 0],
+              y: [0, -42, 28, 0],
+              scale: [1, 1.08, 0.96, 1],
             }}
-            transition={{ duration: 20, repeat: Infinity, ease: "easeInOut" }}
+            transition={{ duration: 22, repeat: Infinity, ease: "easeInOut" }}
           />
           <motion.div
-            className="absolute -right-[10%] top-[20%] h-[40vh] w-[40vw] rounded-full bg-cyan-400/20 blur-[100px] opacity-40 mix-blend-multiply dark:mix-blend-screen"
-            animate={{ 
-              x: [0, -40, 30, 0], 
-              y: [0, 50, -20, 0],
-              scale: [1, 0.9, 1.1, 1]
+            className="absolute -right-[12%] top-[10%] h-[46vh] w-[46vw] rounded-full bg-[rgba(18,216,255,0.16)] blur-[130px] opacity-55 mix-blend-screen"
+            animate={{
+              x: [0, -44, 30, 0],
+              y: [0, 52, -26, 0],
+              scale: [1, 0.94, 1.06, 1],
             }}
-            transition={{ duration: 25, repeat: Infinity, ease: "easeInOut", delay: 2 }}
+            transition={{ duration: 25, repeat: Infinity, ease: "easeInOut", delay: 1.5 }}
           />
           <motion.div
-            className="absolute left-[20%] bottom-[-10%] h-[40vh] w-[40vw] rounded-full bg-pink-400/20 blur-[100px] opacity-40 mix-blend-multiply dark:mix-blend-screen"
-            animate={{ 
-              x: [0, 30, -50, 0], 
-              y: [0, -30, 40, 0],
-              scale: [1, 1.2, 0.8, 1]
+            className="absolute left-[28%] bottom-[-18%] h-[44vh] w-[44vw] rounded-full bg-[rgba(64,102,255,0.16)] blur-[150px] opacity-45 mix-blend-screen"
+            animate={{
+              x: [0, 32, -48, 0],
+              y: [0, -28, 40, 0],
+              scale: [1, 1.14, 0.9, 1],
             }}
-            transition={{ duration: 22, repeat: Infinity, ease: "easeInOut", delay: 5 }}
+            transition={{ duration: 24, repeat: Infinity, ease: "easeInOut", delay: 4 }}
           />
         </div>
 
@@ -77,7 +78,7 @@ function AuthenticatedLayout({ children, userRole, userName }: { children: React
           <AppSidebar userRole={userRole} userName={userName} />
           <div className="flex flex-col flex-1 overflow-hidden">
             <motion.header
-              className="sticky top-0 z-20 flex items-center justify-between px-6 py-4 lg:px-8 backdrop-blur-md bg-background/40 border-b border-white/10"
+              className="sticky top-0 z-20 flex items-center justify-between px-6 py-4 lg:px-8 backdrop-blur-xl bg-[#070f1c]/70 border-b border-white/5 shadow-[0_10px_40px_-32px_rgba(0,0,0,0.8)]"
               initial={{ opacity: 0, y: -20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.4, ease: "easeOut" }}
@@ -127,6 +128,7 @@ function Router() {
   return (
     <Switch>
       <Route path="/login" component={LoginPage} />
+      <Route path="/forgot-password" component={ForgotPassword} />
       
       {/* Client Routes */}
       <Route path="/">
@@ -203,10 +205,10 @@ function Router() {
           <LoginPage />
         )}
       </Route>
-      <Route path="/admin/scan">
-        {isAuthenticated && userRole === "ADMIN" ? (
+      <Route path="/chauffeur/scan">
+        {isAuthenticated && userRole === "CHAUFFEUR" ? (
           <AuthenticatedLayout userRole={userRole} userName={userName}>
-            <AdminScanner />
+            <ChauffeurScanner />
           </AuthenticatedLayout>
         ) : (
           <LoginPage />

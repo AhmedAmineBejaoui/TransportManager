@@ -14,10 +14,16 @@ import {
 } from "./resourceOptimizationService";
 
 import cors from "cors"; // 🔥 ajouté
+import https from "https"; // 🔥 HTTPS
+import fs from "fs"; // 🔥 Pour lire les certificats
+import path from "path"; // 🔥 Pour les chemins
+import helmet from "helmet";
+import rateLimit from "express-rate-limit";
 
 const { Pool } = pkg;
 
 const app = express();
+const isProd = process.env.NODE_ENV === "production";
 
 // Extend IncomingMessage
 declare module "http" {
@@ -29,6 +35,7 @@ declare module "http" {
 // JSON parser preserving raw body
 app.use(
   express.json({
+    limit: "1mb",
     verify: (req, _res, buf) => {
       req.rawBody = buf;
     },
@@ -37,13 +44,83 @@ app.use(
 
 app.use(express.urlencoded({ extended: false }));
 
-// 🔥🔥 CRITICAL FIX FOR COOKIES IN DEV
+const defaultMobileOrigins = ["capacitor://localhost", "http://localhost"];
+const allowedOrigins = (process.env.ALLOWED_ORIGINS || "")
+  .split(",")
+  .map((o) => o.trim())
+  .filter(Boolean)
+  .concat(defaultMobileOrigins);
+
+const corsMiddleware = cors({
+  origin: (origin, callback) => {
+    if (!isProd) {
+      return callback(null, true);
+    }
+    if (!origin) {
+      return callback(null, true);
+    }
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+    console.warn("[cors] blocked origin", origin);
+    return callback(null, false);
+  },
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+  allowedHeaders: [
+    "Content-Type",
+    "Authorization",
+    "X-Requested-With",
+    "Accept",
+    "Origin",
+  ],
+});
+
+app.use(corsMiddleware);
+app.options("*", corsMiddleware);
+
 app.use(
-  cors({
-    origin: "http://localhost:5173",
-    credentials: true,
+  helmet({
+    contentSecurityPolicy: isProd
+      ? {
+          directives: {
+            defaultSrc: ["'self'"],
+            scriptSrc: ["'self'", "'unsafe-inline'"],
+            styleSrc: ["'self'", "'unsafe-inline'"],
+            imgSrc: ["'self'", "data:", "blob:"],
+            connectSrc: ["'self'", "wss:", "ws:"],
+            frameAncestors: ["'none'"],
+          },
+        }
+      : false,
+    crossOriginEmbedderPolicy: false,
   })
 );
+
+const apiLimiter = rateLimit({
+  windowMs:
+    parseInt(process.env.RATE_LIMIT_WINDOW_MS || "", 10) ||
+    15 * 60 * 1000,
+  max: parseInt(process.env.RATE_LIMIT_MAX || "300", 10),
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+app.use("/api", apiLimiter);
+app.use("/auth", apiLimiter);
+
+if (isProd) {
+  app.set("trust proxy", 1);
+}
+
+// 🔥 Endpoint de test de connexion pour l'app mobile
+app.get("/api/ping", (_req, res) => {
+  res.json({ 
+    ok: true, 
+    server: "TransportManager API",
+    timestamp: new Date().toISOString(),
+    message: "Serveur accessible ✅"
+  });
+});
 
 // Logging middleware
 app.use((req, res, next) => {
@@ -98,8 +175,8 @@ app.use(
     cookie: {
       maxAge: 30 * 24 * 60 * 60 * 1000,
       httpOnly: true,
-      secure: false, // 🔥 required on Windows/localhost
-      sameSite: "lax",
+      secure: isProd,
+      sameSite: isProd ? "lax" : "lax",
     },
   })
 );
@@ -128,23 +205,47 @@ app.use(passport.session());
     const status = err.status || err.statusCode || 500;
     const message = err.message || "Internal Server Error";
 
+    console.error("Unhandled error", err);
     res.status(status).json({ message });
-    throw err;
   });
 
   // PORT configuration
   const port = parseInt(process.env.PORT || "5000", 10);
+  const httpsPort = parseInt(process.env.HTTPS_PORT || "5443", 10);
+
+  // 🔥 Charger les certificats SSL
+  const certsPath = path.join(process.cwd(), "certs");
+  let httpsServer = null;
+
+  if (fs.existsSync(path.join(certsPath, "server.key")) && fs.existsSync(path.join(certsPath, "server.crt"))) {
+    const sslOptions = {
+      key: fs.readFileSync(path.join(certsPath, "server.key")),
+      cert: fs.readFileSync(path.join(certsPath, "server.crt")),
+    };
+
+    httpsServer = https.createServer(sslOptions, app);
+    httpsServer.listen(httpsPort, "0.0.0.0", () => {
+      log(`🔒 HTTPS Server running at https://localhost:${httpsPort}`);
+      log(`🔒 HTTPS Network access: https://192.168.1.13:${httpsPort}`);
+    });
+
+    // Realtime sur HTTPS aussi
+    initRealtime(httpsServer);
+  } else {
+    log("⚠️ Certificats SSL non trouvés - HTTPS désactivé");
+  }
 
   /**
    * ✔ WINDOWS + NODE 18+ FIX
    * - host must be 127.0.0.1 (NOT 0.0.0.0)
    * - reusePort must not be used
    */
-  const server = app.listen(port, "localhost", () => {
+  const server = app.listen(port, "0.0.0.0", () => {
     log(`Server running at http://localhost:${port}`);
+    log(`Network access: http://192.168.1.13:${port}`); // Remplacez par votre IP
   });
 
-  // Realtime
+  // Realtime (HTTP)
   initRealtime(server);
 
   // Vite in dev

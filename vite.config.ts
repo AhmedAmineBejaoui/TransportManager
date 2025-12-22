@@ -37,4 +37,19 @@ export default defineConfig({
       deny: ["**/.*"],
     },
   },
+  test: {
+    globals: true,
+    environment: "jsdom",
+    setupFiles: path.resolve(
+      import.meta.dirname,
+      "client",
+      "src",
+      "tests",
+      "setupTests.ts",
+    ),
+    coverage: {
+      provider: "v8",
+      reporter: ["text", "lcov", "html"],
+    },
+  },
 });

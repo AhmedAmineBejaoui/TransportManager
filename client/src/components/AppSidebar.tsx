@@ -5,6 +5,7 @@ import {
   MapPin, 
   Calendar, 
   BarChart3,
+  QrCode,
   Settings,
   LogOut
 } from "lucide-react";
@@ -40,6 +41,7 @@ export function AppSidebar({ userRole, userName }: SidebarProps) {
     { title: "Véhicules", url: "/admin/vehicles", icon: Bus },
     { title: "Utilisateurs", url: "/admin/users", icon: Users },
     { title: "Réservations", url: "/admin/reservations", icon: Calendar },
+    { title: "Scanner QR", url: "/admin/scan", icon: QrCode },
     { title: "Statistiques", url: "/admin/stats", icon: BarChart3 },
   ];
 
@@ -47,6 +49,7 @@ export function AppSidebar({ userRole, userName }: SidebarProps) {
     { title: "Mes Trajets", url: "/chauffeur", icon: MapPin },
     { title: "Calendrier", url: "/chauffeur/calendar", icon: Calendar },
     { title: "Véhicule", url: "/chauffeur/vehicle", icon: Bus },
+    { title: "Scanner QR", url: "/chauffeur/scan", icon: QrCode },
   ];
 
   const clientItems = [
@@ -68,22 +71,29 @@ export function AppSidebar({ userRole, userName }: SidebarProps) {
     .slice(0, 2);
 
   return (
-    <Sidebar data-testid="sidebar-main" className="border-r border-white/10 bg-sidebar/60 backdrop-blur-xl shadow-xl">
+    <Sidebar
+      data-testid="sidebar-main"
+      className="border-r border-white/5 bg-[linear-gradient(180deg,rgba(10,20,34,0.95),rgba(5,12,22,0.92))] backdrop-blur-2xl shadow-[0_24px_80px_-48px_rgba(0,0,0,0.75)]"
+    >
       <SidebarHeader className="p-6 pb-2">
         <div className="flex items-center gap-3">
           <div className="h-10 w-10 rounded-xl flex items-center justify-center">
             <img src="/logo.png" alt="Logo" className="h-full w-full object-contain" />
           </div>
           <div>
-            <h1 className="text-xl font-bold font-heading tracking-tight">TransportPro</h1>
-            <p className="text-xs font-medium text-muted-foreground bg-secondary/50 px-2 py-0.5 rounded-full inline-block mt-1">{userRole}</p>
+            <h1 className="text-xl font-bold font-heading tracking-tight text-white">TransportPro</h1>
+            <p className="text-[11px] font-semibold text-primary bg-white/5 px-2 py-0.5 rounded-full inline-block mt-1 border border-white/10">
+              {userRole}
+            </p>
           </div>
         </div>
       </SidebarHeader>
 
       <SidebarContent className="px-3 py-4">
         <SidebarGroup>
-          <SidebarGroupLabel className="text-xs font-bold uppercase tracking-wider text-muted-foreground/70 px-4 mb-2">Menu Principal</SidebarGroupLabel>
+          <SidebarGroupLabel className="text-[10px] font-bold uppercase tracking-[0.2em] text-white/60 px-4 mb-2">
+            Menu Principal
+          </SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu className="gap-1.5">
               {items.map((item) => (
@@ -92,7 +102,7 @@ export function AppSidebar({ userRole, userName }: SidebarProps) {
                     asChild
                     isActive={location === item.url}
                     data-testid={`sidebar-link-${item.title.toLowerCase().replace(/\s+/g, "-")}`}
-                    className="px-4 py-3 h-auto rounded-xl transition-all duration-200 hover:bg-sidebar-accent/50 data-[active=true]:bg-primary data-[active=true]:text-primary-foreground data-[active=true]:shadow-lg data-[active=true]:shadow-primary/25"
+                    className="px-4 py-3 h-auto rounded-xl transition-all duration-200 border border-transparent hover:border-white/8 hover:bg-white/5 data-[active=true]:border-primary/30 data-[active=true]:bg-primary data-[active=true]:text-primary-foreground data-[active=true]:shadow-lg data-[active=true]:shadow-primary/25"
                   >
                     <Link href={item.url} className="flex items-center gap-3 font-medium">
                       <item.icon className="h-5 w-5 opacity-80" />
@@ -122,7 +132,7 @@ export function AppSidebar({ userRole, userName }: SidebarProps) {
       </SidebarContent>
 
       <SidebarFooter className="p-4 border-t border-white/5">
-        <div className="flex items-center justify-between bg-card/50 p-3 rounded-2xl border border-white/5 shadow-sm">
+        <div className="flex items-center justify-between bg-white/5 p-3 rounded-2xl border border-white/10 shadow-[0_16px_45px_-30px_rgba(0,0,0,0.65)]">
           <div className="flex items-center gap-3">
             <Avatar className="h-9 w-9 border-2 border-primary/20">
               <AvatarFallback className="bg-primary/10 text-primary font-bold">{initials}</AvatarFallback>

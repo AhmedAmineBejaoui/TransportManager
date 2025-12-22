@@ -40,6 +40,15 @@ import {
   knowledgeEmbeddings,
   cobrowsingSessions,
   cobrowsingSignals,
+  // Vehicle & Chauffeur Calendar tables
+  vehicleDetails,
+  vehicleMaintenances,
+  vehicleDocuments,
+  vehicleIncidents,
+  vehicleChecklists,
+  chauffeurEvents,
+  chauffeurLeaves,
+  chauffeurUnavailabilities,
 } from "@shared/schema";
 import type {
   User,
@@ -117,6 +126,23 @@ import type {
   InsertCobrowsingSession,
   CobrowsingSignal,
   InsertCobrowsingSignal,
+  // Vehicle & Chauffeur Calendar types
+  VehicleDetails,
+  InsertVehicleDetails,
+  VehicleMaintenance,
+  InsertVehicleMaintenance,
+  VehicleDocument,
+  InsertVehicleDocument,
+  VehicleIncident,
+  InsertVehicleIncident,
+  VehicleChecklist,
+  InsertVehicleChecklist,
+  ChauffeurEvent,
+  InsertChauffeurEvent,
+  ChauffeurLeave,
+  InsertChauffeurLeave,
+  ChauffeurUnavailability,
+  InsertChauffeurUnavailability,
 } from "@shared/schema";
 import { eq, and, gte, lte, desc, or, like, ilike, sql, inArray, isNull } from "drizzle-orm";
 
@@ -435,9 +461,14 @@ export class DbStorage implements IStorage {
     const conditions = [];
 
     if (params.chauffeurId) {
+      // Montrer les trajets assignés à ce chauffeur OU les trajets non assignés OU les trajets en attente de confirmation
       conditions.push(
         params.includeUnassigned
-          ? or(eq(trips.chauffeur_id, params.chauffeurId), isNull(trips.chauffeur_id))
+          ? or(
+              eq(trips.chauffeur_id, params.chauffeurId), 
+              isNull(trips.chauffeur_id),
+              eq(trips.status, "waiting_chauffeur_confirmation") // Inclure tous les trajets en attente
+            )
           : eq(trips.chauffeur_id, params.chauffeurId),
       );
     }
@@ -1794,6 +1825,176 @@ export class DbStorage implements IStorage {
       .where(eq(optimizationRules.id, id))
       .returning();
     return record;
+  }
+
+  // ==================== VEHICLE DETAILS ====================
+  async getVehicleDetails(vehicleId: string): Promise<VehicleDetails | undefined> {
+    const [record] = await db.select().from(vehicleDetails).where(eq(vehicleDetails.vehicle_id, vehicleId));
+    return record;
+  }
+
+  async upsertVehicleDetails(data: InsertVehicleDetails): Promise<VehicleDetails> {
+    const existing = await this.getVehicleDetails(data.vehicle_id);
+    if (existing) {
+      const [updated] = await db
+        .update(vehicleDetails)
+        .set({ ...data, updated_at: new Date() })
+        .where(eq(vehicleDetails.vehicle_id, data.vehicle_id))
+        .returning();
+      return updated;
+    }
+    const [created] = await db.insert(vehicleDetails).values(data).returning();
+    return created;
+  }
+
+  async getVehicleWithDetails(vehicleId: string): Promise<(Vehicle & { details?: VehicleDetails }) | undefined> {
+    const vehicle = await this.getVehicle(vehicleId);
+    if (!vehicle) return undefined;
+    const details = await this.getVehicleDetails(vehicleId);
+    return { ...vehicle, details };
+  }
+
+  async getVehicleByChauffeur(chauffeurId: string): Promise<(Vehicle & { details?: VehicleDetails }) | undefined> {
+    const [vehicle] = await db.select().from(vehicles).where(eq(vehicles.chauffeur_id, chauffeurId));
+    if (!vehicle) return undefined;
+    const details = await this.getVehicleDetails(vehicle.id);
+    return { ...vehicle, details };
+  }
+
+  // ==================== VEHICLE MAINTENANCES ====================
+  async getVehicleMaintenances(vehicleId: string): Promise<VehicleMaintenance[]> {
+    return db.select().from(vehicleMaintenances).where(eq(vehicleMaintenances.vehicle_id, vehicleId)).orderBy(desc(vehicleMaintenances.date_prevue));
+  }
+
+  async createVehicleMaintenance(data: InsertVehicleMaintenance): Promise<VehicleMaintenance> {
+    const [record] = await db.insert(vehicleMaintenances).values(data).returning();
+    return record;
+  }
+
+  async updateVehicleMaintenance(id: string, patch: Partial<InsertVehicleMaintenance>): Promise<VehicleMaintenance | undefined> {
+    const [record] = await db
+      .update(vehicleMaintenances)
+      .set({ ...patch, updated_at: new Date() })
+      .where(eq(vehicleMaintenances.id, id))
+      .returning();
+    return record;
+  }
+
+  async deleteVehicleMaintenance(id: string): Promise<void> {
+    await db.delete(vehicleMaintenances).where(eq(vehicleMaintenances.id, id));
+  }
+
+  // ==================== VEHICLE DOCUMENTS ====================
+  async getVehicleDocuments(vehicleId: string): Promise<VehicleDocument[]> {
+    return db.select().from(vehicleDocuments).where(eq(vehicleDocuments.vehicle_id, vehicleId)).orderBy(desc(vehicleDocuments.date_expiration));
+  }
+
+  async createVehicleDocument(data: InsertVehicleDocument): Promise<VehicleDocument> {
+    const [record] = await db.insert(vehicleDocuments).values(data).returning();
+    return record;
+  }
+
+  async updateVehicleDocument(id: string, patch: Partial<InsertVehicleDocument>): Promise<VehicleDocument | undefined> {
+    const [record] = await db
+      .update(vehicleDocuments)
+      .set({ ...patch, updated_at: new Date() })
+      .where(eq(vehicleDocuments.id, id))
+      .returning();
+    return record;
+  }
+
+  async deleteVehicleDocument(id: string): Promise<void> {
+    await db.delete(vehicleDocuments).where(eq(vehicleDocuments.id, id));
+  }
+
+  // ==================== VEHICLE INCIDENTS ====================
+  async getVehicleIncidents(vehicleId: string): Promise<VehicleIncident[]> {
+    return db.select().from(vehicleIncidents).where(eq(vehicleIncidents.vehicle_id, vehicleId)).orderBy(desc(vehicleIncidents.date_incident));
+  }
+
+  async createVehicleIncident(data: InsertVehicleIncident): Promise<VehicleIncident> {
+    const [record] = await db.insert(vehicleIncidents).values(data).returning();
+    return record;
+  }
+
+  async updateVehicleIncident(id: string, patch: Partial<InsertVehicleIncident>): Promise<VehicleIncident | undefined> {
+    const [record] = await db
+      .update(vehicleIncidents)
+      .set({ ...patch, updated_at: new Date() })
+      .where(eq(vehicleIncidents.id, id))
+      .returning();
+    return record;
+  }
+
+  // ==================== VEHICLE CHECKLISTS ====================
+  async getVehicleChecklists(vehicleId: string, limit = 20): Promise<VehicleChecklist[]> {
+    return db
+      .select()
+      .from(vehicleChecklists)
+      .where(eq(vehicleChecklists.vehicle_id, vehicleId))
+      .orderBy(desc(vehicleChecklists.created_at))
+      .limit(limit);
+  }
+
+  async createVehicleChecklist(data: InsertVehicleChecklist): Promise<VehicleChecklist> {
+    const [record] = await db.insert(vehicleChecklists).values(data).returning();
+    return record;
+  }
+
+  // ==================== CHAUFFEUR EVENTS ====================
+  async getChauffeurEvents(chauffeurId: string): Promise<ChauffeurEvent[]> {
+    return db.select().from(chauffeurEvents).where(eq(chauffeurEvents.chauffeur_id, chauffeurId)).orderBy(desc(chauffeurEvents.date_debut));
+  }
+
+  async createChauffeurEvent(data: InsertChauffeurEvent): Promise<ChauffeurEvent> {
+    const [record] = await db.insert(chauffeurEvents).values(data).returning();
+    return record;
+  }
+
+  async updateChauffeurEvent(id: string, patch: Partial<InsertChauffeurEvent>): Promise<ChauffeurEvent | undefined> {
+    const [record] = await db
+      .update(chauffeurEvents)
+      .set({ ...patch, updated_at: new Date() })
+      .where(eq(chauffeurEvents.id, id))
+      .returning();
+    return record;
+  }
+
+  async deleteChauffeurEvent(id: string): Promise<void> {
+    await db.delete(chauffeurEvents).where(eq(chauffeurEvents.id, id));
+  }
+
+  // ==================== CHAUFFEUR LEAVES ====================
+  async getChauffeurLeaves(chauffeurId: string): Promise<ChauffeurLeave[]> {
+    return db.select().from(chauffeurLeaves).where(eq(chauffeurLeaves.chauffeur_id, chauffeurId)).orderBy(desc(chauffeurLeaves.date_debut));
+  }
+
+  async createChauffeurLeave(data: InsertChauffeurLeave): Promise<ChauffeurLeave> {
+    const [record] = await db.insert(chauffeurLeaves).values(data).returning();
+    return record;
+  }
+
+  async updateChauffeurLeave(id: string, patch: Partial<InsertChauffeurLeave>): Promise<ChauffeurLeave | undefined> {
+    const [record] = await db
+      .update(chauffeurLeaves)
+      .set({ ...patch, updated_at: new Date() })
+      .where(eq(chauffeurLeaves.id, id))
+      .returning();
+    return record;
+  }
+
+  // ==================== CHAUFFEUR UNAVAILABILITIES ====================
+  async getChauffeurUnavailabilities(chauffeurId: string): Promise<ChauffeurUnavailability[]> {
+    return db.select().from(chauffeurUnavailabilities).where(eq(chauffeurUnavailabilities.chauffeur_id, chauffeurId)).orderBy(desc(chauffeurUnavailabilities.date_debut));
+  }
+
+  async createChauffeurUnavailability(data: InsertChauffeurUnavailability): Promise<ChauffeurUnavailability> {
+    const [record] = await db.insert(chauffeurUnavailabilities).values(data).returning();
+    return record;
+  }
+
+  async deleteChauffeurUnavailability(id: string): Promise<void> {
+    await db.delete(chauffeurUnavailabilities).where(eq(chauffeurUnavailabilities.id, id));
   }
 }
 

@@ -18,19 +18,19 @@ export default function ClientDashboard() {
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [reservationDialogOpen, setReservationDialogOpen] = useState(false);
   const [selectedTripId, setSelectedTripId] = useState<string | null>(null);
-  const [routeQuery, setRouteQuery] = useState<{ depart: string; arrivee: string } | null>(null);
+  const [routeQuery, setRouteQuery] = useState<{ depart?: string; arrivee?: string; date?: Date } | null>(null);
 
   const { toast } = useToast();
 
   const handleSearch = (data: { depart: string; arrivee: string; date?: Date }) => {
-    setRouteQuery({ depart: data.depart, arrivee: data.arrivee });
+    setRouteQuery({ depart: data.depart, arrivee: data.arrivee, date: data.date });
     toast({
       title: "Recherche effectuee",
       description: "Calcul de l'itineraire et des distances...",
     });
   };
 
-  const { data: trips = [] } = useTrips();
+  const { data: trips = [] } = useTrips(routeQuery ?? undefined);
 
   // Ne montrer que les trajets a venir et non annules/termines, mais si aucun, afficher quand m��me les derniers trajets
   const upcomingTrips = trips.filter((t: any) => {
@@ -77,6 +77,8 @@ export default function ClientDashboard() {
         height="h-[500px]"
         origin={routeQuery?.depart}
         destination={routeQuery?.arrivee}
+        trips={visibleTrips as any}
+        activeTripId={selectedTripId ?? undefined}
       />
 
       <div>

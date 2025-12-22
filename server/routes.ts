@@ -34,6 +34,14 @@ import { tunisiaRoutes } from "@shared/tunisiaRoutes";
 import { z } from "zod";
 import crypto from "crypto";
 import bcrypt from "bcrypt";
+import { signJwt, signRefreshToken, verifyJwt } from "./jwt";
+const signRefresh =
+  signRefreshToken ||
+  ((payload: Record<string, unknown>) =>
+    signJwt(
+      { ...payload, type: "refresh" },
+      process.env.JWT_REFRESH_EXPIRES_IN || "30d"
+    ));
 import passport from "passport";
 import { isRoleAllowed, isAdminRole } from "@shared/roles";
 
@@ -60,16 +68,59 @@ declare module "express-session" {
 // Middleware to check authentication
 function requireAuth(req: Request, res: Response, next: NextFunction) {
   const cookieHeader = req.headers.cookie || "none";
-  console.log("[auth] userId:", req.session.userId, "cookie header:", cookieHeader);
-  if (!req.session.userId) {
+  console.log("[auth] session.userId:", req.session.userId, "cookie header:", cookieHeader);
+
+  // First, try session-based auth (existing behavior)
+  if (req.session.userId) {
+    storage
+      .getUser(req.session.userId)
+      .then((user) => {
+        if (!user) {
+          req.session.destroy(() => undefined);
+          return res.status(401).json({ error: "Session invalide" });
+        }
+        if (isUserInMaintenance(user)) {
+          return res.status(423).json({
+            error: "Compte en maintenance",
+            until: user.maintenance_until,
+            reason: user.maintenance_reason,
+          });
+        }
+        req.user = user;
+        void storage.logUserActivity({
+          user_id: user.id,
+          event: "heartbeat",
+          ip: req.ip,
+          device: req.get("user-agent") || undefined,
+        });
+        next();
+      })
+      .catch((error) => next(error));
+    return;
+  }
+
+  // If no session, try JWT Bearer token
+  const authHeader = req.get("authorization");
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
     return res.status(401).json({ error: "Non authentifié" });
   }
+
+  const token = authHeader.replace(/^Bearer\s+/i, "");
+  const result = verifyJwt(token);
+  if (!result.ok) {
+    return res.status(401).json({ error: "Token invalide: " + result.error });
+  }
+
+  const payload = result.payload as any;
+  if (!payload || !payload.userId) {
+    return res.status(401).json({ error: "Token JWT invalide (userId manquant)" });
+  }
+
   storage
-    .getUser(req.session.userId)
+    .getUser(payload.userId)
     .then((user) => {
       if (!user) {
-        req.session.destroy(() => undefined);
-        return res.status(401).json({ error: "Session invalide" });
+        return res.status(401).json({ error: "Token JWT référant un utilisateur inconnu" });
       }
       if (isUserInMaintenance(user)) {
         return res.status(423).json({
@@ -93,14 +144,29 @@ function requireAuth(req: Request, res: Response, next: NextFunction) {
 // Middleware to check role
 function requireRole(...roles: string[]) {
   return async (req: Request, res: Response, next: NextFunction) => {
-    if (!req.session.userId) {
+    // Support session-based or JWT-based authentication
+    let effectiveUserId: string | undefined = undefined;
+    if (req.session.userId) {
+      effectiveUserId = req.session.userId;
+    } else {
+      const authHeader = req.get("authorization");
+      if (authHeader && authHeader.startsWith("Bearer ")) {
+        const token = authHeader.replace(/^Bearer\s+/i, "");
+        const verification = verifyJwt(token);
+        if (verification.ok && (verification.payload as any).userId) {
+          effectiveUserId = (verification.payload as any).userId;
+        }
+      }
+    }
+
+    if (!effectiveUserId) {
       return res.status(401).json({ error: "Non authentifi\u00e9" });
     }
 
     try {
       let user = req.user;
       if (!user) {
-        user = await storage.getUser(req.session.userId);
+        user = await storage.getUser(effectiveUserId);
       }
       if (!user) {
         return res.status(401).json({ error: "Session invalide" });
@@ -139,6 +205,199 @@ function isUserInMaintenance(user: TransportUser): boolean {
 
   const until = user.maintenance_until instanceof Date ? user.maintenance_until : new Date(user.maintenance_until);
   return until.getTime() > Date.now();
+}
+
+type SignedQrPayload = {
+  reservation_id: string;
+  client_id: string;
+  bus_id: string | null;
+  seat_number: string | null;
+  date: string;
+  time: string;
+  trip_id?: string;
+  signature: string;
+};
+
+const QR_SECRET = process.env.QR_SECRET || process.env.SESSION_SECRET || "dev-secret";
+
+function formatDateOnly(input: string | Date | null | undefined): string | null {
+  if (!input) return null;
+  const d = input instanceof Date ? input : new Date(input);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toISOString().slice(0, 10);
+}
+
+function formatTimeOnly(input: string | Date | null | undefined): string | null {
+  if (!input) return null;
+  if (typeof input === "string") {
+    const match = input.match(/^(\d{2}:\d{2})/);
+    if (match) {
+      return match[1];
+    }
+  }
+  const d = input instanceof Date ? input : new Date(input);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toISOString().slice(11, 16);
+}
+
+function buildQrBasePayload(reservation: Reservation, trip?: Trip): Omit<SignedQrPayload, "signature"> {
+  const dateFromTrip = formatDateOnly(trip?.trip_date ?? trip?.heure_depart_prevue);
+  const timeFromTrip = formatTimeOnly(trip?.start_time ?? trip?.heure_depart_prevue);
+  const fallbackDate = formatDateOnly(reservation.date_reservation);
+  const fallbackTime = formatTimeOnly(reservation.date_reservation);
+
+  return {
+    reservation_id: reservation.id,
+    client_id: reservation.client_id,
+    bus_id: trip?.vehicle_id ?? null,
+    seat_number: reservation.numero_siege ?? null,
+    date: dateFromTrip ?? fallbackDate ?? "",
+    time: timeFromTrip ?? fallbackTime ?? "",
+    trip_id: reservation.trip_id,
+  };
+}
+
+function signQrPayload(base: Omit<SignedQrPayload, "signature">): string {
+  return crypto.createHmac("sha256", QR_SECRET).update(JSON.stringify(base)).digest("hex");
+}
+
+function buildSignedQrPayload(reservation: Reservation, trip?: Trip): SignedQrPayload {
+  const base = buildQrBasePayload(reservation, trip);
+  return {
+    ...base,
+    signature: signQrPayload(base),
+  };
+}
+
+async function validateSignedQrPayload(payloadInput: unknown): Promise<{
+  ok: boolean;
+  status: number;
+  response: {
+    valid: boolean;
+    status: "valid" | "invalid" | "expired" | "not_found";
+    error?: string;
+    issues?: string[];
+    reservation?: Reservation;
+    trip?: Trip | null;
+    payload?: SignedQrPayload;
+    alreadyChecked?: boolean;
+  };
+}> {
+  let parsed: any = payloadInput;
+
+  try {
+    if (typeof payloadInput === "string") {
+      parsed = JSON.parse(payloadInput);
+    }
+  } catch {
+    return { ok: false, status: 400, response: { valid: false, status: "invalid", error: "QR illisible" } };
+  }
+
+  if (!parsed || typeof parsed !== "object") {
+    return { ok: false, status: 400, response: { valid: false, status: "invalid", error: "QR incomplet" } };
+  }
+
+  const { reservation_id, client_id, bus_id, seat_number, date, time, signature, trip_id } = parsed as Partial<SignedQrPayload>;
+
+  if (!reservation_id || !client_id || !date || !time || !signature) {
+    return { ok: false, status: 400, response: { valid: false, status: "invalid", error: "Champs QR manquants" } };
+  }
+
+  const base: Omit<SignedQrPayload, "signature"> = {
+    reservation_id,
+    client_id,
+    bus_id: bus_id ?? null,
+    seat_number: seat_number ?? null,
+    date,
+    time,
+    trip_id: trip_id ?? undefined,
+  };
+
+  const expectedSignature = signQrPayload(base);
+  if (signature !== expectedSignature) {
+    return {
+      ok: false,
+      status: 403,
+      response: {
+        valid: false,
+        status: "invalid",
+        error: "Signature QR invalide",
+        issues: ["Signature QR invalide"],
+        payload: { ...base, signature },
+      },
+    };
+  }
+
+  const reservation = await storage.getReservation(reservation_id);
+  if (!reservation) {
+    return {
+      ok: false,
+      status: 404,
+      response: {
+        valid: false,
+        status: "not_found",
+        error: "R\u00e9servation introuvable",
+        payload: { ...base, signature },
+      },
+    };
+  }
+
+  const trip = await storage.getTrip(reservation.trip_id);
+  const expectedPayload = buildSignedQrPayload(reservation, trip ?? undefined);
+  const issues: string[] = [];
+
+  if (reservation.client_id !== client_id) {
+    issues.push("Client non correspondant");
+  }
+  if (expectedPayload.bus_id && base.bus_id && expectedPayload.bus_id !== base.bus_id) {
+    issues.push("Bus non correspondant");
+  }
+  if (expectedPayload.seat_number && base.seat_number && expectedPayload.seat_number !== base.seat_number) {
+    issues.push("Si\u00e8ge non correspondant");
+  }
+  if (expectedPayload.date && base.date !== expectedPayload.date) {
+    issues.push("Date du trajet incorrecte");
+  }
+  if (expectedPayload.time && base.time !== expectedPayload.time) {
+    issues.push("Horaire du trajet incorrect");
+  }
+  if (reservation.statut === "annule") {
+    issues.push("R\u00e9servation annul\u00e9e");
+  }
+  if (reservation.statut === "pending_payment") {
+    issues.push("R\u00e9servation non r\u00e9gl\u00e9e");
+  }
+
+  const todayIso = formatDateOnly(new Date());
+  if (expectedPayload.date && todayIso && expectedPayload.date !== todayIso) {
+    issues.push("Billet non valable pour aujourd'hui");
+  }
+  if (trip?.heure_depart_prevue) {
+    const departure = new Date(trip.heure_depart_prevue);
+    const delay = Date.now() - departure.getTime();
+    if (!Number.isNaN(delay) && delay > 1000 * 60 * 180) {
+      issues.push("Billet expir\u00e9");
+    }
+  }
+
+  const valid = issues.length === 0;
+  const statusLabel: "valid" | "invalid" | "expired" | "not_found" =
+    !valid && issues.some((i) => i.toLowerCase().includes("expir")) ? "expired" : valid ? "valid" : "invalid";
+
+  return {
+    ok: valid,
+    status: valid ? 200 : statusLabel === "not_found" ? 404 : 400,
+    response: {
+      valid,
+      status: statusLabel,
+      error: valid ? undefined : issues[0] ?? "QR invalide",
+      issues,
+      reservation,
+      trip: trip ?? null,
+      payload: expectedPayload,
+      alreadyChecked: reservation.checked ?? false,
+    },
+  };
 }
 
 const ENTITIES = [
@@ -1488,10 +1747,47 @@ export function registerRoutes(app: Express) {
         device: req.get("user-agent") || undefined,
         metadata: { provider: "local" },
       });
+      const accessToken = signJwt({ userId: user.id, email: user.email });
+      const refreshToken = signRefresh({ userId: user.id });
       const { password: _, ...userWithoutPassword } = user;
-      res.json(userWithoutPassword);
+      res.json({ user: userWithoutPassword, jwt: accessToken, refreshToken });
     } catch (error) {
       console.error("❌ Login error:", error);
+      res.status(500).json({ error: "Erreur serveur" });
+    }
+  });
+
+  // Refresh endpoint: exchange refresh token for new access token (and rotate refresh token)
+  app.post("/api/auth/refresh", async (req, res) => {
+    try {
+      const { refreshToken } = req.body || {};
+      if (!refreshToken) return res.status(400).json({ error: "refreshToken manquant" });
+
+      const verification = verifyJwt(refreshToken);
+      if (!verification.ok) return res.status(401).json({ error: "Refresh token invalide" });
+
+      const payload = verification.payload as any;
+      if (payload.type !== "refresh" || !payload.userId) {
+        return res.status(401).json({ error: "Refresh token invalide" });
+      }
+
+      const user = await storage.getUser(payload.userId);
+      if (!user) return res.status(401).json({ error: "Utilisateur introuvable" });
+
+      // Issue new tokens (rotate)
+      const newAccessToken = signJwt({ userId: user.id, email: user.email });
+      const newRefreshToken = signRefresh({ userId: user.id });
+
+      await storage.logUserActivity({
+        user_id: user.id,
+        event: "refresh_token",
+        ip: req.ip,
+        device: req.get("user-agent") || undefined,
+      });
+
+      res.json({ jwt: newAccessToken, refreshToken: newRefreshToken });
+    } catch (err) {
+      console.error("Refresh error:", err);
       res.status(500).json({ error: "Erreur serveur" });
     }
   });
@@ -3117,7 +3413,24 @@ export function registerRoutes(app: Express) {
   });
 
   const adminTripCreateSchema = adminTripPayloadBaseSchema;
-  const adminTripUpdateSchema = adminTripPayloadBaseSchema.partial();
+  
+  // Schéma de mise à jour séparé - tous les champs sont optionnels
+  // et les champs de temps acceptent undefined/null
+  const adminTripUpdateSchema = z.object({
+    chauffeur_id: z.string().uuid().optional(),
+    vehicle_id: z.string().uuid().optional().nullable(),
+    date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    start_time: z.string().regex(/^\d{2}:\d{2}$/).optional(),
+    end_time: z.string().regex(/^\d{2}:\d{2}$/).optional(),
+    start_location: z.string().min(1).optional(),
+    end_location: z.string().min(1).optional(),
+    category: tripCategorySchema.optional(),
+    status: tripStatusSchema.optional(),
+    notes: z.string().max(2000).optional().nullable(),
+    prix: z.union([z.string(), z.number()]).optional(),
+    places_disponibles: z.number().int().positive().optional(),
+    distance_km: z.number().int().nonnegative().optional(),
+  });
 
   const mapAdminStatusToTripStatut = (status: z.infer<typeof tripStatusSchema>): string => {
     switch (status) {
@@ -3283,6 +3596,35 @@ export function registerRoutes(app: Express) {
     }
   });
 
+  // Endpoint dédié pour changer uniquement le statut d'un trip
+  app.patch("/api/admin/trips/:id/status", requireRole("ADMIN"), async (req, res) => {
+    try {
+      const statusSchema = z.object({
+        status: tripStatusSchema,
+      });
+      
+      const { status } = statusSchema.parse(req.body);
+      
+      const existing = await storage.getTrip(req.params.id);
+      if (!existing) {
+        return res.status(404).json({ error: "Trajet non trouvé" });
+      }
+
+      const patch: Partial<InsertTrip> = {
+        status: status,
+        statut: mapAdminStatusToTripStatut(status),
+      };
+
+      const updated = await storage.updateTrip(req.params.id, patch);
+      res.json(updated);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: "Statut invalide", details: error.errors });
+      }
+      res.status(500).json({ error: "Erreur serveur" });
+    }
+  });
+
   app.delete("/api/admin/trips/:id", requireRole("ADMIN"), async (req, res) => {
     try {
       await storage.deleteTrip(req.params.id);
@@ -3443,6 +3785,336 @@ export function registerRoutes(app: Express) {
     }
   });
 
+  // ==================== CHAUFFEUR EVENTS ====================
+  app.get("/api/chauffeur/events", requireRole("CHAUFFEUR", "ADMIN"), async (req, res) => {
+    try {
+      const events = await storage.getChauffeurEvents(req.user!.id);
+      res.json(events);
+    } catch (error) {
+      res.status(500).json({ error: "Erreur serveur" });
+    }
+  });
+
+  app.post("/api/chauffeur/events", requireRole("CHAUFFEUR", "ADMIN"), async (req, res) => {
+    try {
+      const { type, titre, description, date_debut, date_fin, lieu, rappel, rappel_minutes, statut, metadata } = req.body;
+      if (!type || !titre || !date_debut) {
+        return res.status(400).json({ error: "Type, titre et date_debut sont requis" });
+      }
+      const event = await storage.createChauffeurEvent({
+        chauffeur_id: req.user!.id,
+        type,
+        titre,
+        description,
+        date_debut: new Date(date_debut),
+        date_fin: date_fin ? new Date(date_fin) : null,
+        lieu,
+        rappel,
+        rappel_minutes,
+        statut,
+        metadata,
+      });
+      res.status(201).json(event);
+    } catch (error) {
+      res.status(500).json({ error: "Erreur serveur" });
+    }
+  });
+
+  app.patch("/api/chauffeur/events/:id", requireRole("CHAUFFEUR", "ADMIN"), async (req, res) => {
+    try {
+      const event = await storage.updateChauffeurEvent(req.params.id, req.body);
+      if (!event) return res.status(404).json({ error: "Événement non trouvé" });
+      res.json(event);
+    } catch (error) {
+      res.status(500).json({ error: "Erreur serveur" });
+    }
+  });
+
+  app.delete("/api/chauffeur/events/:id", requireRole("CHAUFFEUR", "ADMIN"), async (req, res) => {
+    try {
+      await storage.deleteChauffeurEvent(req.params.id);
+      res.json({ message: "Événement supprimé" });
+    } catch (error) {
+      res.status(500).json({ error: "Erreur serveur" });
+    }
+  });
+
+  // ==================== CHAUFFEUR LEAVES (CONGÉS) ====================
+  app.get("/api/chauffeur/leaves", requireRole("CHAUFFEUR", "ADMIN"), async (req, res) => {
+    try {
+      const leaves = await storage.getChauffeurLeaves(req.user!.id);
+      res.json(leaves);
+    } catch (error) {
+      res.status(500).json({ error: "Erreur serveur" });
+    }
+  });
+
+  app.post("/api/chauffeur/leaves", requireRole("CHAUFFEUR", "ADMIN"), async (req, res) => {
+    try {
+      const { type, date_debut, date_fin, motif, justificatif_url } = req.body;
+      if (!type || !date_debut || !date_fin) {
+        return res.status(400).json({ error: "Type, date_debut et date_fin sont requis" });
+      }
+      const leave = await storage.createChauffeurLeave({
+        chauffeur_id: req.user!.id,
+        type,
+        date_debut: new Date(date_debut),
+        date_fin: new Date(date_fin),
+        motif,
+        justificatif_url,
+      });
+      res.status(201).json(leave);
+    } catch (error) {
+      res.status(500).json({ error: "Erreur serveur" });
+    }
+  });
+
+  app.post("/api/chauffeur/leaves/:id/cancel", requireRole("CHAUFFEUR", "ADMIN"), async (req, res) => {
+    try {
+      const leave = await storage.updateChauffeurLeave(req.params.id, { statut: "annule" });
+      if (!leave) return res.status(404).json({ error: "Congé non trouvé" });
+      res.json(leave);
+    } catch (error) {
+      res.status(500).json({ error: "Erreur serveur" });
+    }
+  });
+
+  // Admin approve/reject leave
+  app.post("/api/admin/leaves/:id/approve", requireRole("ADMIN"), async (req, res) => {
+    try {
+      const { statut, commentaire_decision } = req.body;
+      if (!["valide", "refuse"].includes(statut)) {
+        return res.status(400).json({ error: "Statut invalide (valide | refuse)" });
+      }
+      const leave = await storage.updateChauffeurLeave(req.params.id, {
+        statut,
+        approuve_par: req.user!.id,
+        date_decision: new Date(),
+        commentaire_decision,
+      });
+      if (!leave) return res.status(404).json({ error: "Congé non trouvé" });
+      res.json(leave);
+    } catch (error) {
+      res.status(500).json({ error: "Erreur serveur" });
+    }
+  });
+
+  // ==================== CHAUFFEUR UNAVAILABILITIES ====================
+  app.get("/api/chauffeur/unavailabilities", requireRole("CHAUFFEUR", "ADMIN"), async (req, res) => {
+    try {
+      const unavailabilities = await storage.getChauffeurUnavailabilities(req.user!.id);
+      res.json(unavailabilities);
+    } catch (error) {
+      res.status(500).json({ error: "Erreur serveur" });
+    }
+  });
+
+  app.post("/api/chauffeur/unavailabilities", requireRole("CHAUFFEUR", "ADMIN"), async (req, res) => {
+    try {
+      const { date_debut, date_fin, motif, type } = req.body;
+      if (!date_debut || !date_fin) {
+        return res.status(400).json({ error: "date_debut et date_fin sont requis" });
+      }
+      const unavailability = await storage.createChauffeurUnavailability({
+        chauffeur_id: req.user!.id,
+        date_debut: new Date(date_debut),
+        date_fin: new Date(date_fin),
+        motif,
+        type,
+      });
+      res.status(201).json(unavailability);
+    } catch (error) {
+      res.status(500).json({ error: "Erreur serveur" });
+    }
+  });
+
+  app.delete("/api/chauffeur/unavailabilities/:id", requireRole("CHAUFFEUR", "ADMIN"), async (req, res) => {
+    try {
+      await storage.deleteChauffeurUnavailability(req.params.id);
+      res.json({ message: "Indisponibilité supprimée" });
+    } catch (error) {
+      res.status(500).json({ error: "Erreur serveur" });
+    }
+  });
+
+  // ==================== CHAUFFEUR VEHICLE ====================
+  app.get("/api/chauffeur/vehicle", requireRole("CHAUFFEUR", "ADMIN"), async (req, res) => {
+    try {
+      const vehicle = await storage.getVehicleByChauffeur(req.user!.id);
+      if (!vehicle) {
+        return res.status(404).json({ error: "Aucun véhicule assigné" });
+      }
+      res.json(vehicle);
+    } catch (error) {
+      res.status(500).json({ error: "Erreur serveur" });
+    }
+  });
+
+  app.patch("/api/chauffeur/vehicle/levels", requireRole("CHAUFFEUR", "ADMIN"), async (req, res) => {
+    try {
+      const vehicle = await storage.getVehicleByChauffeur(req.user!.id);
+      if (!vehicle) {
+        return res.status(404).json({ error: "Aucun véhicule assigné" });
+      }
+      const { niveau_carburant, niveau_batterie, kilometrage } = req.body;
+      const updated = await storage.upsertVehicleDetails({
+        vehicle_id: vehicle.id,
+        ...(niveau_carburant !== undefined && { niveau_carburant }),
+        ...(niveau_batterie !== undefined && { niveau_batterie }),
+        ...(kilometrage !== undefined && { kilometrage }),
+      });
+      res.json(updated);
+    } catch (error) {
+      res.status(500).json({ error: "Erreur serveur" });
+    }
+  });
+
+  // ==================== VEHICLE MAINTENANCES ====================
+  app.get("/api/chauffeur/vehicle/maintenances", requireRole("CHAUFFEUR", "ADMIN"), async (req, res) => {
+    try {
+      const vehicle = await storage.getVehicleByChauffeur(req.user!.id);
+      if (!vehicle) {
+        return res.status(404).json({ error: "Aucun véhicule assigné" });
+      }
+      const maintenances = await storage.getVehicleMaintenances(vehicle.id);
+      res.json(maintenances);
+    } catch (error) {
+      res.status(500).json({ error: "Erreur serveur" });
+    }
+  });
+
+  app.post("/api/chauffeur/vehicle/maintenances", requireRole("CHAUFFEUR", "ADMIN"), async (req, res) => {
+    try {
+      const vehicle = await storage.getVehicleByChauffeur(req.user!.id);
+      if (!vehicle) {
+        return res.status(404).json({ error: "Aucun véhicule assigné" });
+      }
+      const { type, titre, description, date_prevue, kilometrage_prevu, garage, priorite, notes } = req.body;
+      if (!type || !titre) {
+        return res.status(400).json({ error: "Type et titre sont requis" });
+      }
+      const maintenance = await storage.createVehicleMaintenance({
+        vehicle_id: vehicle.id,
+        type,
+        titre,
+        description,
+        date_prevue: date_prevue ? new Date(date_prevue) : null,
+        kilometrage_prevu,
+        garage,
+        priorite,
+        notes,
+      });
+      res.status(201).json(maintenance);
+    } catch (error) {
+      res.status(500).json({ error: "Erreur serveur" });
+    }
+  });
+
+  // ==================== VEHICLE DOCUMENTS ====================
+  app.get("/api/chauffeur/vehicle/documents", requireRole("CHAUFFEUR", "ADMIN"), async (req, res) => {
+    try {
+      const vehicle = await storage.getVehicleByChauffeur(req.user!.id);
+      if (!vehicle) {
+        return res.status(404).json({ error: "Aucun véhicule assigné" });
+      }
+      const documents = await storage.getVehicleDocuments(vehicle.id);
+      res.json(documents);
+    } catch (error) {
+      res.status(500).json({ error: "Erreur serveur" });
+    }
+  });
+
+  // ==================== VEHICLE INCIDENTS ====================
+  app.get("/api/chauffeur/vehicle/incidents", requireRole("CHAUFFEUR", "ADMIN"), async (req, res) => {
+    try {
+      const vehicle = await storage.getVehicleByChauffeur(req.user!.id);
+      if (!vehicle) {
+        return res.status(404).json({ error: "Aucun véhicule assigné" });
+      }
+      const incidents = await storage.getVehicleIncidents(vehicle.id);
+      res.json(incidents);
+    } catch (error) {
+      res.status(500).json({ error: "Erreur serveur" });
+    }
+  });
+
+  app.post("/api/chauffeur/vehicle/incidents", requireRole("CHAUFFEUR", "ADMIN"), async (req, res) => {
+    try {
+      const vehicle = await storage.getVehicleByChauffeur(req.user!.id);
+      if (!vehicle) {
+        return res.status(404).json({ error: "Aucun véhicule assigné" });
+      }
+      const { type, description, gravite, localisation, photos, trip_id, notes } = req.body;
+      if (!type || !description) {
+        return res.status(400).json({ error: "Type et description sont requis" });
+      }
+      const incident = await storage.createVehicleIncident({
+        vehicle_id: vehicle.id,
+        chauffeur_id: req.user!.id,
+        trip_id,
+        type,
+        description,
+        gravite,
+        localisation,
+        photos,
+        notes,
+      });
+      res.status(201).json(incident);
+    } catch (error) {
+      res.status(500).json({ error: "Erreur serveur" });
+    }
+  });
+
+  // ==================== VEHICLE CHECKLISTS ====================
+  app.get("/api/chauffeur/vehicle/checklists", requireRole("CHAUFFEUR", "ADMIN"), async (req, res) => {
+    try {
+      const vehicle = await storage.getVehicleByChauffeur(req.user!.id);
+      if (!vehicle) {
+        return res.status(404).json({ error: "Aucun véhicule assigné" });
+      }
+      const checklists = await storage.getVehicleChecklists(vehicle.id);
+      res.json(checklists);
+    } catch (error) {
+      res.status(500).json({ error: "Erreur serveur" });
+    }
+  });
+
+  app.post("/api/chauffeur/vehicle/checklists", requireRole("CHAUFFEUR", "ADMIN"), async (req, res) => {
+    try {
+      const vehicle = await storage.getVehicleByChauffeur(req.user!.id);
+      if (!vehicle) {
+        return res.status(404).json({ error: "Aucun véhicule assigné" });
+      }
+      const { type, items, trip_id, kilometrage, niveau_carburant, commentaire_general, signature } = req.body;
+      if (!type || !items) {
+        return res.status(400).json({ error: "Type et items sont requis" });
+      }
+      const checklist = await storage.createVehicleChecklist({
+        vehicle_id: vehicle.id,
+        chauffeur_id: req.user!.id,
+        trip_id,
+        type,
+        items,
+        kilometrage,
+        niveau_carburant,
+        commentaire_general,
+        signature,
+        completed_at: new Date(),
+      });
+      // Mettre à jour le kilométrage et niveau carburant si fournis
+      if (kilometrage || niveau_carburant) {
+        await storage.upsertVehicleDetails({
+          vehicle_id: vehicle.id,
+          ...(kilometrage && { kilometrage }),
+          ...(niveau_carburant && { niveau_carburant }),
+        });
+      }
+      res.status(201).json(checklist);
+    } catch (error) {
+      res.status(500).json({ error: "Erreur serveur" });
+    }
+  });
+
   // Create trip (admin only)
   app.post("/api/trips", requireRole("ADMIN"), async (req, res) => {
     try {
@@ -3516,18 +4188,18 @@ export function registerRoutes(app: Express) {
       
       const reservations = await storage.getReservationsByClient(user!.id);
 
-      // Attach a short HMAC token for QR generation for each reservation (no DB changes)
-      const secret = process.env.SESSION_SECRET || "dev-secret";
+      const tripsById = new Map(
+        (await Promise.all(reservations.map((r) => storage.getTrip(r.trip_id))))
+          .filter((t): t is Trip => Boolean(t))
+          .map((t) => [t.id, t]),
+      );
+
       const enriched = reservations.map((r) => {
-        try {
-          const token = crypto.createHmac("sha256", secret).update(r.id).digest("hex").slice(0, 32);
-          return {
-            ...r,
-            qr: { text: JSON.stringify({ reservationId: r.id, token }) },
-          };
-        } catch (err) {
-          return r;
-        }
+        const qrPayload = buildSignedQrPayload(r, tripsById.get(r.trip_id));
+        return {
+          ...r,
+          qr: { text: JSON.stringify(qrPayload), payload: qrPayload },
+        };
       });
 
       res.json(enriched);
@@ -3549,7 +4221,13 @@ export function registerRoutes(app: Express) {
         return res.status(403).json({ error: "Accès interdit" });
       }
 
-      res.json(reservation);
+      const trip = await storage.getTrip(reservation.trip_id);
+      const qrPayload = buildSignedQrPayload(reservation, trip ?? undefined);
+
+      res.json({
+        ...reservation,
+        qr: { text: JSON.stringify(qrPayload), payload: qrPayload },
+      });
     } catch (error) {
       res.status(500).json({ error: "Erreur serveur" });
     }
@@ -3589,17 +4267,15 @@ export function registerRoutes(app: Express) {
 
       const reservation = await storage.createReservation(data);
 
-      // Generate a simple HMAC-based token for QR validation (no DB schema changes)
-      const secret = process.env.SESSION_SECRET || "dev-secret";
-      const hmac = crypto.createHmac("sha256", secret).update(reservation.id).digest("hex");
-      const token = hmac.slice(0, 32);
+      const qrPayload = buildSignedQrPayload(reservation, trip);
 
       // Include a qr object in the response so the client can render a QR code
       const reservationWithQr = {
         ...reservation,
         qr: {
-          // The client will encode this text into a QR code. It contains reservation id and token.
-          text: JSON.stringify({ reservationId: reservation.id, token }),
+          // The client will encode this text into a QR code. It contains reservation id + trip metadata + signature.
+          text: JSON.stringify(qrPayload),
+          payload: qrPayload,
         },
       };
 
@@ -3744,9 +4420,90 @@ export function registerRoutes(app: Express) {
     }
   });
 
-  // Validate ticket (used by scanning QR). Accepts query params `reservationId` and `token`.
+  // ==================== DRIVER APP SCAN ENDPOINT ====================
+  // Endpoint dédié pour l'application mobile chauffeur
+  // Valide le QR et effectue le check-in automatiquement si demandé
+  app.post("/api/reservations/scan", async (req, res) => {
+    try {
+      const body = req.body ?? {};
+      const rawPayload =
+        (body as any).qrCode ??
+        (body as any).qr ??
+        (body as any).payload ??
+        (Object.keys(body).length ? body : undefined);
+
+      const autoCheckin = (body as any).autoCheckin === true;
+
+      if (!rawPayload) {
+        return res.status(400).json({ 
+          valid: false, 
+          status: "invalid", 
+          error: "QR code manquant" 
+        });
+      }
+
+      // Valider le QR code
+      const result = await validateSignedQrPayload(rawPayload);
+      
+      // Si valide et autoCheckin demandé, effectuer le check-in
+      if (result.ok && autoCheckin && result.response.reservation) {
+        const reservation = result.response.reservation;
+        
+        // Vérifier si déjà checked-in
+        if (reservation.checked) {
+          return res.json({
+            ...result.response,
+            alreadyChecked: true,
+            checkedIn: false,
+            message: "Passager déjà embarqué"
+          });
+        }
+
+        // Effectuer le check-in (sans authentification requise pour l'app chauffeur)
+        try {
+          await storage.markReservationChecked(reservation.id, "driver-app");
+          return res.json({
+            ...result.response,
+            checkedIn: true,
+            message: "Check-in effectué avec succès"
+          });
+        } catch (checkinError) {
+          // Retourner quand même le résultat de validation même si le check-in échoue
+          return res.json({
+            ...result.response,
+            checkedIn: false,
+            checkinError: "Erreur lors du check-in automatique"
+          });
+        }
+      }
+
+      // Retourner le résultat de validation
+      if (result.ok) {
+        return res.json(result.response);
+      }
+      return res.status(result.status).json(result.response);
+
+    } catch (error) {
+      console.error("Driver scan error:", error);
+      res.status(500).json({ 
+        valid: false, 
+        status: "error", 
+        error: "Erreur serveur lors du scan" 
+      });
+    }
+  });
+
+  // Validate ticket (used by scanning QR). Supports new signed payload or legacy token query.
   app.get("/api/tickets/validate", async (req, res) => {
     try {
+      if ((req.query as any).payload) {
+        const result = await validateSignedQrPayload((req.query as any).payload);
+        if (result.ok) {
+          return res.json(result.response);
+        }
+        return res.status(result.status).json(result.response);
+      }
+
       const { reservationId, token } = req.query as Record<string, string | undefined>;
       if (!reservationId || !token) {
         return res.status(400).json({ error: "Paramètres manquants" });
@@ -3765,6 +4522,29 @@ export function registerRoutes(app: Express) {
 
       // Optionally, you can check if reservation is cancelled or expired.
       res.json({ valid: true, reservation });
+    } catch (error) {
+      res.status(500).json({ error: "Erreur serveur" });
+    }
+  });
+
+  app.post("/api/tickets/validate", requireRole("ADMIN", "CHAUFFEUR"), async (req, res) => {
+    try {
+      const body = req.body ?? {};
+      const rawPayload =
+        (body as any).payload ??
+        (body as any).qr ??
+        (body as any).qrText ??
+        (Object.keys(body).length ? body : undefined);
+
+      if (!rawPayload) {
+        return res.status(400).json({ valid: false, status: "invalid", error: "QR manquant" });
+      }
+
+      const result = await validateSignedQrPayload(rawPayload);
+      if (result.ok) {
+        return res.json(result.response);
+      }
+      return res.status(result.status).json(result.response);
     } catch (error) {
       res.status(500).json({ error: "Erreur serveur" });
     }
