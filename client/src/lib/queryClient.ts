@@ -1,5 +1,38 @@
 import { QueryClient, QueryFunction } from "@tanstack/react-query";
 
+const DEFAULT_TIMEOUT_MS = 15000;
+
+async function fetchWithTimeout(
+  input: RequestInfo | URL,
+  init: RequestInit,
+  timeoutMs = DEFAULT_TIMEOUT_MS,
+) {
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await fetch(input, {
+      ...init,
+      signal: controller.signal,
+    });
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+}
+
+function getHttpStatusFromError(error: unknown): number | null {
+  if (!(error instanceof Error)) {
+    return null;
+  }
+
+  const match = /^(\d{3}):/.exec(error.message);
+  if (!match) {
+    return null;
+  }
+
+  return Number(match[1]);
+}
+
 /* -------------------------------------------------------------
    Helper: Throw error if response NOT ok
 ------------------------------------------------------------- */
@@ -24,7 +57,7 @@ export async function apiRequest(
   const headers: Record<string, string> = data ? { "Content-Type": "application/json" } : {};
   if (token) headers["Authorization"] = `Bearer ${token}`;
 
-  const res = await fetch(url, {
+  const res = await fetchWithTimeout(url, {
     method,
     headers,
     body: data ? JSON.stringify(data) : undefined,
@@ -38,7 +71,7 @@ export async function apiRequest(
     const refresh = typeof window !== "undefined" ? localStorage.getItem("auth:refresh") : null;
     if (refresh) {
       try {
-        const refreshRes = await fetch("/api/auth/refresh", {
+        const refreshRes = await fetchWithTimeout("/api/auth/refresh", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ refreshToken: refresh }),
@@ -56,7 +89,7 @@ export async function apiRequest(
           // retry original request with new token
           const newToken = typeof window !== "undefined" ? localStorage.getItem("auth:jwt") : null;
           if (newToken) headers["Authorization"] = `Bearer ${newToken}`;
-          const retryRes = await fetch(url, {
+          const retryRes = await fetchWithTimeout(url, {
             method,
             headers,
             body: data ? JSON.stringify(data) : undefined,
@@ -114,7 +147,7 @@ export const getQueryFn: <T>(options: {
       if (qs.length > 0) finalUrl += "?" + qs;
     }
 
-    const res = await fetch(finalUrl, {
+    const res = await fetchWithTimeout(finalUrl, {
       credentials: "include", // 🔥 Nécessaire pour la session
     });
 
@@ -135,12 +168,20 @@ export const queryClient = new QueryClient({
     queries: {
       queryFn: getQueryFn({ on401: "throw" }),
       refetchInterval: false,
-      refetchOnWindowFocus: false,
-      staleTime: Infinity,
-      retry: false,
+      refetchOnWindowFocus: true,
+      staleTime: 30_000,
+      gcTime: 15 * 60_000,
+      retry: (failureCount, error) => {
+        const status = getHttpStatusFromError(error);
+        if (status !== null && status >= 400 && status < 500) {
+          return false;
+        }
+
+        return failureCount < 2;
+      },
     },
     mutations: {
-      retry: false,
+      retry: 1,
     },
   },
 });

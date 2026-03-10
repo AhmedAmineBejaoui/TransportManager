@@ -5,7 +5,22 @@ import './App.css'
 // Configuration API - À adapter selon ton réseau local
 // En production, utiliser l'IP du serveur ou un domaine
 // 🔒 HTTPS sur le port 5443
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://192.168.1.13:5443'
+const API_BASE_URL = (import.meta.env.VITE_API_URL || 'https://localhost:5443').replace(/\/$/, '')
+const REQUEST_TIMEOUT_MS = 10000
+
+const fetchWithTimeout = async (url, options = {}, timeoutMs = REQUEST_TIMEOUT_MS) => {
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
+
+  try {
+    return await fetch(url, {
+      ...options,
+      signal: controller.signal,
+    })
+  } finally {
+    clearTimeout(timeoutId)
+  }
+}
 
 function App() {
   const [scanResult, setScanResult] = useState(null)
@@ -44,18 +59,13 @@ function App() {
     const checkServer = async () => {
       console.log('Checking server at:', API_BASE_URL)
       try {
-        const controller = new AbortController()
-        const timeoutId = setTimeout(() => controller.abort(), 10000) // 10 secondes timeout
-        
-        const response = await fetch(`${API_BASE_URL}/api/ping`, {
+        const response = await fetchWithTimeout(`${API_BASE_URL}/api/ping`, {
           method: 'GET',
           headers: {
             'Accept': 'application/json',
           },
-          signal: controller.signal,
           mode: 'cors',
         })
-        clearTimeout(timeoutId)
         
         console.log('Server response status:', response.status)
         
@@ -70,9 +80,9 @@ function App() {
           setErrorDetails(`HTTP ${response.status}`)
         }
       } catch (err) {
-        console.error('Server check failed:', err.name, err.message)
+        console.error('Server check failed:', err?.name, err?.message)
         setServerStatus('offline')
-        setErrorDetails(err.message || err.name || 'Erreur inconnue')
+        setErrorDetails(err?.message || err?.name || 'Erreur inconnue')
       }
     }
     
@@ -127,7 +137,7 @@ function App() {
       }
 
       // Appeler l'endpoint de scan/validation du chauffeur
-      const response = await fetch(`${API_BASE_URL}/api/reservations/scan`, {
+      const response = await fetchWithTimeout(`${API_BASE_URL}/api/reservations/scan`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -136,6 +146,9 @@ function App() {
       })
 
       const data = await response.json()
+      if (!response.ok) {
+        throw new Error(data?.error || `HTTP ${response.status}`)
+      }
 
       const result = {
         success: data.valid === true,

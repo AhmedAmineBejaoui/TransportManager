@@ -1,4 +1,4 @@
-import express, { type Request, Response, NextFunction } from "express";
+import express from "express";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import session from "express-session";
@@ -12,6 +12,11 @@ import {
   startResourceOptimizationScheduler,
   runResourceOptimizationCycle,
 } from "./resourceOptimizationService";
+import {
+  attachRequestContext,
+  logApiRequest,
+} from "./middleware/requestContext";
+import { errorHandler, notFoundHandler } from "./middleware/errorHandler";
 
 import cors from "cors"; // 🔥 ajouté
 import https from "https"; // 🔥 HTTPS
@@ -43,6 +48,7 @@ app.use(
 );
 
 app.use(express.urlencoded({ extended: false }));
+app.use(attachRequestContext);
 
 const defaultMobileOrigins = ["capacitor://localhost", "http://localhost"];
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || "")
@@ -112,46 +118,25 @@ if (isProd) {
   app.set("trust proxy", 1);
 }
 
-// 🔥 Endpoint de test de connexion pour l'app mobile
+// Endpoint de test de connexion pour l'app mobile
 app.get("/api/ping", (_req, res) => {
-  res.json({ 
-    ok: true, 
+  res.json({
+    ok: true,
     server: "TransportManager API",
     timestamp: new Date().toISOString(),
-    message: "Serveur accessible ✅"
+    message: "Serveur accessible ✅",
   });
 });
 
-// Logging middleware
-app.use((req, res, next) => {
-  const start = Date.now();
-  const path = req.path;
-  let capturedJsonResponse: Record<string, any> | undefined = undefined;
+app.use(logApiRequest);
 
-  const originalResJson = res.json;
-  res.json = function (bodyJson, ...args) {
-    capturedJsonResponse = bodyJson;
-    return originalResJson.apply(res, [bodyJson, ...args]);
-  };
-
-  res.on("finish", () => {
-    const duration = Date.now() - start;
-    if (path.startsWith("/api")) {
-      let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
-
-      if (capturedJsonResponse) {
-        logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
-      }
-
-      if (logLine.length > 80) {
-        logLine = logLine.slice(0, 79) + "…";
-      }
-
-      log(logLine);
-    }
+app.get("/api/health", (_req, res) => {
+  res.status(200).json({
+    ok: true,
+    timestamp: new Date().toISOString(),
+    uptimeSeconds: Math.floor(process.uptime()),
+    environment: process.env.NODE_ENV || "development",
   });
-
-  next();
 });
 
 // Session store (PostgreSQL)
@@ -188,6 +173,7 @@ app.use(passport.session());
 // MAIN SERVER FUNCTION
 (async () => {
   registerRoutes(app);
+  app.use("/api", notFoundHandler);
 
   if (process.env.ENABLE_RESOURCE_OPTIMIZATION === "1") {
     startResourceOptimizationScheduler();
@@ -201,13 +187,7 @@ app.use(passport.session());
   }
 
   // Global error handler
-  app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
-    const status = err.status || err.statusCode || 500;
-    const message = err.message || "Internal Server Error";
-
-    console.error("Unhandled error", err);
-    res.status(status).json({ message });
-  });
+  app.use(errorHandler);
 
   // PORT configuration
   const port = parseInt(process.env.PORT || "5000", 10);
