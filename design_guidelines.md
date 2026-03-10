@@ -8,10 +8,17 @@
 
 **Core Principles**:
 - Information hierarchy over decoration
-- Functional clarity for multi-role interfaces'DATA6rt_manager
+- Functional clarity forOGLE_CLIENT_ID=209740070606-o3v8k7ulflu5p44ip6gsa9sdi60sh1hl.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=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
+PORT=5000
+VITE_WS_PORT=5000
+JWT_SECRET=bb4ea309742abefeb3975de209ac6b8883c00954ed8c6367106b1d0e0b9b751f
+JWT_EXPIRES_IN=7d
+ multi-role interfaces'DATA6rt_manager
 
-J5de209ac6b
-JIN=7d
+J5de2JWT_SECRET=bb4ea309742abefeb3975de209ac6b8883c00954ed8c6367106b1d0e0b9b751f
+JWT_EXPIRES_IN=7d
+
 '
 - Consistent patterns across admin/driver/passenger views
 - Data-first presentation with clear visual groupings
