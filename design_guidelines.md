@@ -8,7 +8,12 @@
 
 **Core Principles**:
 - Information hierarchy over decoration
-- Functional clarity for multi-role interfaces
+- Functional clarity for multi-role interfaces'DATA6rt_manager
+SEST=bb4ea309742abefeb3975de209ac6b8883c00954ed8c6367106b1d0e0b9b751f
+RT=5000
+J5de209ac6b8883c00954ed8c6367106b1d0e0b9b751f
+JIN=7d
+'
 - Consistent patterns across admin/driver/passenger views
 - Data-first presentation with clear visual groupings
 
