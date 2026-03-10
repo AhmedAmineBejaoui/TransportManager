@@ -1,6 +1,7 @@
-DATABASE_URL=postgresql://postgres:
-GOOGLE_CLIENT_ID=209740070606-o3v8k7ulflu5p44ip6gsa9sdi60sh1
-PORT=5000
-VITE_WS_PORT=5000
-JWT_SECRET=bb4ea309742abefeb3975de209ac6b8883c00954ed8c6367106b1d0e0b9b751f
-JWT_EXPIRES_IN=7d
+#DATAegerdfgveBASE_URL=pgbgfostgresql://postgres:
+GOOGgrtgezeLE_CLIENT_grgdgvfdgID=209740070606-o3v8k7ulflu5p44ip6gsa9sdi60sh1
+PORTgtrge=5000
+VITEgergrger_WS_PORT=5000
+JWT_SetgerECRergdfgET=bb4ea309742abefeb3975de209agbgfrgrgrefc6b8883c00954ed8c6367106b1d0e0b9b751f
+JWT_EetgetrXPIRES_IN=7d
+tgtr
