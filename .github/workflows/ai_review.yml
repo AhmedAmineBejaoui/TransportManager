@@ -6,16 +6,17 @@ on:
 
 jobs:
   ai_review:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       pull-requests: read
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Compute PR diff
         id: diff
@@ -45,17 +46,31 @@ jobs:
           API_URL: ${{ secrets.AI_REVIEW_API_URL }}
           API_TOKEN: ${{ secrets.AI_REVIEW_API_TOKEN }}   # optionnel
           API_USER_ID: ${{ secrets.AI_REVIEW_USER_ID }}   # optionnel (si RBAC activé côté backend)
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          ACTOR: ${{ github.actor }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BRANCH: ${{ github.event.pull_request.head.ref }}
         run: |
           set -euo pipefail
 
+          # Trim accidental whitespace from the repository secret without printing it.
+          API_URL="$(printf '%s' "${API_URL:-}" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
           API_URL="${API_URL%/}"
-
-          REPO="${{ github.repository }}"
-          PR_NUMBER="${{ github.event.pull_request.number }}"
-          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
-          ACTOR="${{ github.actor }}"
-          PR_TITLE="${{ github.event.pull_request.title }}"
-          PR_BRANCH="${{ github.event.pull_request.head.ref }}"
+          if [ -z "$API_URL" ]; then
+            echo "::error title=Missing API URL::Set AI_REVIEW_API_URL in repository Actions secrets to the HTTPS base URL of the review backend."
+            exit 1
+          fi
+          # Validate without exposing the secret. Never send repository diffs to insecure HTTP.
+          if [[ ! "$API_URL" =~ ^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[^[:space:]]*)?$ ]]; then
+            echo "::error title=Invalid API URL::AI_REVIEW_API_URL must be a valid HTTPS base URL, without embedded whitespace or credentials."
+            exit 1
+          fi
+          if [[ "$API_URL" == */v1/analyze ]] || [[ "$API_URL" == */v1/analyses ]]; then
+            echo "::error title=Invalid API base URL::Remove the /v1/analyze or /v1/analyses suffix from AI_REVIEW_API_URL."
+            exit 1
+          fi
           COMMIT_MESSAGE="$(git log -1 --pretty=%s "$HEAD_SHA" 2>/dev/null || true)"
           LABELS_JSON="$(jq -c '[.pull_request.labels[]?.name]' "$GITHUB_EVENT_PATH")"
 
@@ -92,7 +107,10 @@ jobs:
             CURL_HEADERS+=(-H "X-User-Id: $API_USER_ID")
           fi
 
-          RESP="$(curl -sS -w "\n%{http_code}" -X POST "$API_URL/v1/analyze" "${CURL_HEADERS[@]}" --data-binary @request.json)"
+          if ! RESP="$(curl --silent --show-error --connect-timeout 15 --max-time 90 --retry 2 --retry-delay 2 -w "\n%{http_code}" -X POST "$API_URL/v1/analyze" "${CURL_HEADERS[@]}" --data-binary @request.json)"; then
+            echo "::error title=Review API connection failed::Could not reach the configured AI review backend. Verify its URL, TLS certificate, deployment and availability."
+            exit 1
+          fi
           HTTP_CODE="$(echo "$RESP" | tail -1)"
           BODY="$(echo "$RESP" | sed '$d')"
 
@@ -144,7 +162,10 @@ jobs:
           fi
 
           for i in $(seq 1 72); do
-            RESP="$(curl -sS -w "\n%{http_code}" "$API_URL/v1/analyses/$ID" "${CURL_HEADERS[@]}")"
+            if ! RESP="$(curl --silent --show-error --connect-timeout 15 --max-time 45 --retry 2 --retry-delay 2 -w "\n%{http_code}" "$API_URL/v1/analyses/$ID" "${CURL_HEADERS[@]}")"; then
+              echo "::error title=Review API polling failed::The review backend could not be reached."
+              exit 1
+            fi
             HTTP_CODE="$(echo "$RESP" | tail -1)"
             BODY="$(echo "$RESP" | sed '$d')"
 
@@ -205,7 +226,7 @@ jobs:
 
       - name: Upload review artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: ai-review-result
           path: |
