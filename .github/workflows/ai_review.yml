@@ -115,8 +115,14 @@ jobs:
           BODY="$(echo "$RESP" | sed '$d')"
 
           echo "HTTP $HTTP_CODE"
-          echo "$BODY" | head -c 800 || true
-          echo
+          if [ "$HTTP_CODE" = "404" ]; then
+            echo "::error title=AI review endpoint unavailable::The configured AI_REVIEW_API_URL returned HTTP 404 at /v1/analyze. If this uses ngrok, restart the backend/tunnel and update the repository secret with its current HTTPS base URL."
+            exit 1
+          fi
+          if [ "$HTTP_CODE" -ge 400 ] && [ "$HTTP_CODE" != "409" ]; then
+            echo "::error title=AI review request rejected::The review API returned HTTP $HTTP_CODE. Check endpoint, authorization, and backend logs."
+            exit 1
+          fi
 
           if [ "$HTTP_CODE" = "409" ]; then
             # DUPLICATE_ANALYSIS -> on réutilise existing_id (utile pour relancer manuellement un même PR)
