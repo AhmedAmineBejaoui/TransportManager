@@ -5,6 +5,19 @@ on:
     types: [opened, synchronize, reopened]
 
 jobs:
+  auth_logging_regression:
+    name: Authentication logging regression
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: Run focused Node.js security regression tests
+        run: node --test .github/scripts/auth-logging.test.mjs
+
   ai_review:
     runs-on: ubuntu-24.04
     permissions:
