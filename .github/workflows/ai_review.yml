@@ -16,7 +16,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Run focused Node.js security regression tests
-        run: node --test .github/scripts/auth-logging.test.mjs
+        run: node --test .github/scripts/*.test.mjs
 
   ai_review:
     runs-on: ubuntu-24.04
@@ -120,7 +120,7 @@ jobs:
             CURL_HEADERS+=(-H "X-User-Id: $API_USER_ID")
           fi
 
-          if ! RESP="$(curl --silent --show-error --connect-timeout 15 --max-time 90 --retry 2 --retry-delay 2 -w "\n%{http_code}" -X POST "$API_URL/v1/analyze" "${CURL_HEADERS[@]}" --data-binary @request.json)"; then
+          if ! RESP="$(curl --globoff --silent --show-error --connect-timeout 15 --max-time 90 --retry 2 --retry-delay 2 -w "\n%{http_code}" -X POST "$API_URL/v1/analyze" "${CURL_HEADERS[@]}" --data-binary @request.json)"; then
             echo "::error title=Review API connection failed::Could not reach the configured AI review backend. Verify its URL, TLS certificate, deployment and availability."
             exit 1
           fi
@@ -186,7 +186,7 @@ jobs:
           fi
 
           for i in $(seq 1 72); do
-            if ! RESP="$(curl --silent --show-error --connect-timeout 15 --max-time 45 --retry 2 --retry-delay 2 -w "\n%{http_code}" "$API_URL/v1/analyses/$ID" "${CURL_HEADERS[@]}")"; then
+            if ! RESP="$(curl --globoff --silent --show-error --connect-timeout 15 --max-time 45 --retry 2 --retry-delay 2 -w "\n%{http_code}" "$API_URL/v1/analyses/$ID" "${CURL_HEADERS[@]}")"; then
               echo "::error title=Review API polling failed::The review backend could not be reached."
               exit 1
             fi
