@@ -67,8 +67,7 @@ declare module "express-session" {
 
 // Middleware to check authentication
 function requireAuth(req: Request, res: Response, next: NextFunction) {
-  const cookieHeader = req.headers.cookie || "none";
-  console.log("[auth] session.userId:", req.session.userId, "cookie header:", cookieHeader);
+  // Authentication credentials and session identifiers must never be written to logs.
 
   // First, try session-based auth (existing behavior)
   if (req.session.userId) {
