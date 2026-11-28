@@ -1,7 +1,10 @@
 import jwt from "jsonwebtoken";
 import "dotenv/config";
 
-const JWT_SECRET = process.env.JWT_SECRET || process.env.SESSION_SECRET || "dev-jwt-secret";
+const JWT_SECRET = process.env.JWT_SECRET || process.env.SESSION_SECRET;
+if (!JWT_SECRET) {
+  throw new Error("JWT_SECRET or SESSION_SECRET environment variable is required");
+}
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || "7d"; // default 7 days
 const JWT_REFRESH_EXPIRES_IN = process.env.JWT_REFRESH_EXPIRES_IN || "30d"; // default 30 days
 
